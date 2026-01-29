@@ -457,11 +457,22 @@
         }
 
         // Parse heart rate from historical data packet
+        // Parse heart rate from historical data packet
+        // Packet structure (after header):
+        //   0-3:   Unknown (4 bytes)
+        //   4-7:   Unix timestamp (4 bytes, little-endian)
+        //   8-13:  Unknown (6 bytes)
+        //   14:    BPM (1 byte)
+        //   15:    RR interval count (1 byte)
+        //   16-23: RR intervals (up to 4 x 2 bytes)
+        //   24-27: Activity value (4 bytes)
         function parseHeartRate(data) {
             if (data.length < 20) return null;
 
-            const timestamp = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
-            const bpm = data[10];
+            // Timestamp at offset 4
+            const timestamp = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
+            // BPM at offset 14
+            const bpm = data[14];
 
             if (bpm > 0 && bpm < 250) {
                 return { timestamp, bpm };
