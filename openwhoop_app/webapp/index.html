@@ -5,330 +5,160 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
     <title>OpenWhoop</title>
     <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
+        * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            background: #0a0a0f;
             color: white;
             min-height: 100vh;
-            padding: 20px;
-        }
-
-        .container {
-            max-width: 400px;
-            margin: 0 auto;
-        }
-
-        h1 {
-            text-align: center;
-            font-size: 28px;
-            margin-bottom: 8px;
-        }
-
-        .subtitle {
-            text-align: center;
-            color: #888;
-            font-size: 14px;
-            margin-bottom: 24px;
-        }
-
-        .status-card {
-            background: rgba(255,255,255,0.1);
-            border-radius: 16px;
-            padding: 20px;
-            text-align: center;
-            margin-bottom: 20px;
-        }
-
-        .status-icon {
-            font-size: 48px;
-            margin-bottom: 12px;
-        }
-
-        .status-text {
-            color: #ccc;
-            font-size: 14px;
-        }
-
-        .connect-btn {
-            width: 100%;
             padding: 16px;
-            font-size: 18px;
-            font-weight: 600;
-            border: none;
-            border-radius: 12px;
-            cursor: pointer;
-            background: linear-gradient(135deg, #e74c3c 0%, #c0392b 100%);
-            color: white;
-            margin-bottom: 24px;
-            transition: transform 0.1s, opacity 0.2s;
         }
-
-        .connect-btn:hover {
-            transform: scale(1.02);
-        }
-
-        .connect-btn:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-            transform: none;
-        }
-
-        .heart-container {
+        .header {
             display: flex;
-            justify-content: center;
-            margin-bottom: 24px;
-        }
-
-        .heart-circle {
-            width: 200px;
-            height: 200px;
-            border-radius: 50%;
-            background: rgba(231, 76, 60, 0.2);
-            border: 4px solid #e74c3c;
-            display: flex;
-            flex-direction: column;
+            justify-content: space-between;
             align-items: center;
-            justify-content: center;
-            transition: transform 0.15s ease-out, box-shadow 0.15s;
-        }
-
-        .heart-circle.pulse {
-            transform: scale(1.08);
-            box-shadow: 0 0 30px rgba(231, 76, 60, 0.5);
-        }
-
-        .heart-circle.resting {
-            border-color: #3498db;
-            background: rgba(52, 152, 219, 0.2);
-        }
-
-        .heart-circle.normal {
-            border-color: #2ecc71;
-            background: rgba(46, 204, 113, 0.2);
-        }
-
-        .heart-circle.elevated {
-            border-color: #f39c12;
-            background: rgba(243, 156, 18, 0.2);
-        }
-
-        .heart-circle.high {
-            border-color: #e74c3c;
-            background: rgba(231, 76, 60, 0.2);
-        }
-
-        .heart-icon {
-            font-size: 40px;
-            margin-bottom: 8px;
-        }
-
-        .bpm-value {
-            font-size: 64px;
-            font-weight: bold;
-            line-height: 1;
-        }
-
-        .bpm-label {
-            font-size: 18px;
-            opacity: 0.8;
-        }
-
-        .zone-label {
-            font-size: 14px;
-            margin-top: 4px;
-            opacity: 0.7;
-        }
-
-        .stats-row {
-            display: flex;
-            justify-content: space-around;
             margin-bottom: 24px;
         }
-
-        .stat-card {
-            background: rgba(255,255,255,0.1);
-            border-radius: 12px;
-            padding: 12px 20px;
-            text-align: center;
-            min-width: 80px;
-        }
-
-        .stat-card.min { border-left: 3px solid #3498db; }
-        .stat-card.avg { border-left: 3px solid #2ecc71; }
-        .stat-card.max { border-left: 3px solid #e74c3c; }
-
-        .stat-value {
-            font-size: 24px;
-            font-weight: bold;
-        }
-
-        .stat-label {
-            font-size: 12px;
-            color: #888;
-        }
-
-        .chart-container {
-            background: rgba(255,255,255,0.1);
-            border-radius: 16px;
-            padding: 16px;
-            margin-bottom: 16px;
-        }
-
-        .chart-title {
-            font-size: 14px;
-            color: #888;
-            margin-bottom: 12px;
-        }
-
-        canvas {
-            width: 100%;
-            height: 150px;
-        }
-
-        .reading-count {
-            text-align: center;
+        .title { font-size: 20px; font-weight: 600; }
+        .status {
             font-size: 12px;
             color: #666;
-        }
-
-        .history-section {
-            margin-top: 24px;
-        }
-
-        .history-title {
-            font-size: 16px;
-            margin-bottom: 12px;
             display: flex;
-            justify-content: space-between;
             align-items: center;
+            gap: 6px;
         }
-
-        .clear-btn {
-            background: rgba(255,255,255,0.1);
-            border: none;
-            color: #888;
-            padding: 6px 12px;
-            border-radius: 6px;
-            font-size: 12px;
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: #666;
+        }
+        .status-dot.connected { background: #22c55e; }
+        .connect-btn {
+            background: #222;
+            border: 1px solid #333;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            font-size: 14px;
             cursor: pointer;
+            width: 100%;
+            margin-bottom: 24px;
         }
+        .connect-btn:disabled { opacity: 0.5; }
+        .hidden { display: none; }
 
-        .history-list {
+        /* Heart rate display */
+        .hr-display {
+            text-align: center;
+            margin-bottom: 24px;
+        }
+        .hr-value {
+            font-size: 72px;
+            font-weight: 200;
+            line-height: 1;
+            color: #ef4444;
+        }
+        .hr-label {
+            font-size: 14px;
+            color: #666;
+            margin-top: 4px;
+        }
+        .hr-zone {
+            font-size: 12px;
+            color: #888;
+            margin-top: 8px;
+            padding: 4px 12px;
             background: rgba(255,255,255,0.05);
             border-radius: 12px;
-            max-height: 200px;
-            overflow-y: auto;
+            display: inline-block;
         }
 
-        .history-item {
-            padding: 12px 16px;
-            border-bottom: 1px solid rgba(255,255,255,0.1);
+        /* Stats row */
+        .stats {
             display: flex;
             justify-content: space-between;
+            margin-bottom: 24px;
+            padding: 16px;
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
         }
+        .stat { text-align: center; flex: 1; }
+        .stat-value { font-size: 24px; font-weight: 500; }
+        .stat-label { font-size: 11px; color: #666; margin-top: 2px; }
+        .stat.min .stat-value { color: #3b82f6; }
+        .stat.avg .stat-value { color: #22c55e; }
+        .stat.max .stat-value { color: #ef4444; }
 
-        .history-item:last-child {
-            border-bottom: none;
-        }
-
-        .hidden {
-            display: none;
-        }
-
-        .error-msg {
-            background: rgba(231, 76, 60, 0.2);
-            border: 1px solid #e74c3c;
-            border-radius: 8px;
-            padding: 12px;
+        /* Chart */
+        .chart-container {
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            padding: 16px;
             margin-bottom: 16px;
-            font-size: 14px;
         }
+        canvas { width: 100%; height: 120px; }
 
-        .info-msg {
-            background: rgba(52, 152, 219, 0.2);
-            border: 1px solid #3498db;
-            border-radius: 8px;
+        /* Info text */
+        .info { font-size: 11px; color: #444; text-align: center; }
+
+        /* Error/warning messages */
+        .msg {
             padding: 12px;
+            border-radius: 8px;
             margin-bottom: 16px;
-            font-size: 14px;
+            font-size: 13px;
         }
+        .msg.error { background: rgba(239,68,68,0.1); border: 1px solid #ef4444; }
+        .msg.warning { background: rgba(59,130,246,0.1); border: 1px solid #3b82f6; }
     </style>
 </head>
 <body>
-    <div class="container">
-        <h1>OpenWhoop</h1>
-        <p class="subtitle">Heart rate without subscription (v3)</p>
+    <div class="header">
+        <div class="title">OpenWhoop</div>
+        <div class="status" id="status">
+            <span class="status-dot" id="status-dot"></span>
+            <span id="status-text">Not connected</span>
+        </div>
+    </div>
 
-        <div id="error-box" class="error-msg hidden"></div>
+    <div id="error-box" class="msg error hidden"></div>
+    <div id="browser-warning" class="msg warning hidden">
+        Web Bluetooth not supported.<br>
+        <strong>iPhone:</strong> Use "Bluefy" app &nbsp;|&nbsp; <strong>Android/PC:</strong> Use Chrome
+    </div>
 
-        <div id="browser-warning" class="info-msg hidden">
-            Web Bluetooth not supported in this browser.<br><br>
-            <strong>On iPhone:</strong> Download "Bluefy" from the App Store<br>
-            <strong>On Android/PC:</strong> Use Chrome
+    <button class="connect-btn" id="connect-btn" onclick="connectToWhoop()">
+        Connect to Whoop
+    </button>
+
+    <div id="data-section" class="hidden">
+        <div class="hr-display">
+            <div class="hr-value" id="bpm-value">--</div>
+            <div class="hr-label">BPM</div>
+            <div class="hr-zone" id="zone-label">--</div>
         </div>
 
-        <div class="status-card">
-            <div class="status-icon" id="status-icon">📱</div>
-            <div class="status-text" id="status-text">Tap Connect to find your Whoop</div>
-        </div>
-
-        <button class="connect-btn" id="connect-btn" onclick="connectToWhoop()">
-            Connect to Whoop
-        </button>
-
-        <div id="data-section" class="hidden">
-            <div class="heart-container">
-                <div class="heart-circle" id="heart-circle">
-                    <div class="heart-icon">❤️</div>
-                    <div class="bpm-value" id="bpm-value">--</div>
-                    <div class="bpm-label">BPM</div>
-                    <div class="zone-label" id="zone-label"></div>
-                </div>
+        <div class="stats">
+            <div class="stat min">
+                <div class="stat-value" id="min-bpm">--</div>
+                <div class="stat-label">MIN</div>
             </div>
-
-            <div class="stats-row">
-                <div class="stat-card min">
-                    <div class="stat-value" id="min-bpm">--</div>
-                    <div class="stat-label">MIN</div>
-                </div>
-                <div class="stat-card avg">
-                    <div class="stat-value" id="avg-bpm">--</div>
-                    <div class="stat-label">AVG</div>
-                </div>
-                <div class="stat-card max">
-                    <div class="stat-value" id="max-bpm">--</div>
-                    <div class="stat-label">MAX</div>
-                </div>
+            <div class="stat avg">
+                <div class="stat-value" id="avg-bpm">--</div>
+                <div class="stat-label">AVG</div>
             </div>
-
-            <div class="chart-container">
-                <div class="chart-title">Heart Rate History</div>
-                <canvas id="chart"></canvas>
-            </div>
-
-            <div class="reading-count" id="reading-count">0 readings</div>
-
-            <div class="chart-container" style="margin-top: 16px; font-family: monospace; font-size: 12px;">
-                <div class="chart-title">Debug Info</div>
-                <div id="debug-output" style="word-break: break-all; color: #888;">Waiting for data...</div>
+            <div class="stat max">
+                <div class="stat-value" id="max-bpm">--</div>
+                <div class="stat-label">MAX</div>
             </div>
         </div>
 
-        <div class="history-section">
-            <div class="history-title">
-                <span>Saved Sessions</span>
-                <button class="clear-btn" onclick="clearHistory()">Clear</button>
-            </div>
-            <div class="history-list" id="history-list">
-                <div class="history-item" style="color: #666;">No saved sessions</div>
-            </div>
+        <div class="chart-container">
+            <canvas id="chart"></canvas>
         </div>
+
+        <div class="info" id="reading-count">0 readings</div>
     </div>
 
     <script>
@@ -338,165 +168,74 @@
         const CMD_FROM_STRAP = '61080003-8d6d-82b8-614a-1c8cb0f8dcc6';
         const DATA_FROM_STRAP = '61080005-8d6d-82b8-614a-1c8cb0f8dcc6';
 
-        // State
-        let device = null;
-        let cmdChar = null;
-        let readings = [];
+        let device = null, cmdChar = null;
+        let readings = [], chartData = [];
         let minBpm = 999, maxBpm = 0, totalBpm = 0;
-        let chartData = [];
         let canvas, ctx;
 
-        // Check Web Bluetooth support
         if (!navigator.bluetooth) {
             document.getElementById('browser-warning').classList.remove('hidden');
             document.getElementById('connect-btn').disabled = true;
         }
 
-        // Initialize
         document.addEventListener('DOMContentLoaded', () => {
             canvas = document.getElementById('chart');
             ctx = canvas.getContext('2d');
-            loadHistory();
         });
 
-        // CRC8 calculation
+        // CRC functions
         function crc8(data) {
             let crc = 0;
-            for (const byte of data) {
-                crc ^= byte;
-                for (let i = 0; i < 8; i++) {
-                    if (crc & 0x80) {
-                        crc = ((crc << 1) ^ 0x07) & 0xFF;
-                    } else {
-                        crc = (crc << 1) & 0xFF;
-                    }
-                }
+            for (const b of data) {
+                crc ^= b;
+                for (let i = 0; i < 8; i++) crc = (crc & 0x80) ? ((crc << 1) ^ 0x07) & 0xFF : (crc << 1) & 0xFF;
             }
             return crc;
         }
 
-        // CRC32 calculation
         function crc32(data) {
             let crc = 0xFFFFFFFF;
-            for (const byte of data) {
-                crc ^= byte;
-                for (let i = 0; i < 8; i++) {
-                    if (crc & 1) {
-                        crc = ((crc >>> 1) ^ 0xEDB88320) >>> 0;
-                    } else {
-                        crc = crc >>> 1;
-                    }
-                }
+            for (const b of data) {
+                crc ^= b;
+                for (let i = 0; i < 8; i++) crc = (crc & 1) ? ((crc >>> 1) ^ 0xEDB88320) >>> 0 : crc >>> 1;
             }
             return (~crc) >>> 0;
         }
 
-        // Create a Whoop packet
-        function createPacket(packetType, seq, cmd, data) {
-            const payload = [packetType, seq, cmd, ...data];
-            const length = payload.length + 4;
-            const lengthBytes = [length & 0xFF, (length >> 8) & 0xFF];
-            const crc8Val = crc8(lengthBytes);
-            const crc32Val = crc32(payload);
-            const crc32Bytes = [
-                crc32Val & 0xFF,
-                (crc32Val >> 8) & 0xFF,
-                (crc32Val >> 16) & 0xFF,
-                (crc32Val >> 24) & 0xFF
-            ];
-            return new Uint8Array([0xAA, ...lengthBytes, crc8Val, ...payload, ...crc32Bytes]);
+        function createPacket(type, seq, cmd, data) {
+            const payload = [type, seq, cmd, ...data];
+            const len = payload.length + 4;
+            const lenBytes = [len & 0xFF, (len >> 8) & 0xFF];
+            const c32 = crc32(payload);
+            return new Uint8Array([0xAA, ...lenBytes, crc8(lenBytes), ...payload,
+                c32 & 0xFF, (c32 >> 8) & 0xFF, (c32 >> 16) & 0xFF, (c32 >> 24) & 0xFF]);
         }
 
-        // Create command packets
-        function helloHarvard() {
-            return createPacket(35, 0, 35, [0x00]);
-        }
-
-        function setClock() {
-            const timestamp = Math.floor(Date.now() / 1000);
-            const timeBytes = [
-                timestamp & 0xFF,
-                (timestamp >> 8) & 0xFF,
-                (timestamp >> 16) & 0xFF,
-                (timestamp >> 24) & 0xFF
-            ];
-            return createPacket(35, 0, 10, [...timeBytes, 0, 0, 0, 0, 0]);
-        }
-
-        function enterHighFreqSync() {
-            return createPacket(35, 0, 96, []);
-        }
-
-        function historyStart() {
-            return createPacket(35, 0, 22, [0x00]);
-        }
-
-        // Enable real-time heart rate (command 3)
-        function enableRealtimeHr() {
-            return createPacket(35, 0, 3, [0x01]);
-        }
-
-        function historyEnd(dataValue) {
-            const dataBytes = [
-                dataValue & 0xFF,
-                (dataValue >> 8) & 0xFF,
-                (dataValue >> 16) & 0xFF,
-                (dataValue >> 24) & 0xFF
-            ];
-            return createPacket(35, 0, 23, [0x01, ...dataBytes, 0, 0, 0, 0]);
-        }
-
-        // Parse incoming packet
         function parsePacket(data) {
             if (data.length < 8 || data[0] !== 0xAA) return null;
-
-            const lengthBytes = [data[1], data[2]];
-            if (crc8(lengthBytes) !== data[3]) return null;
-
-            const length = lengthBytes[0] | (lengthBytes[1] << 8);
-            if (data.length < 4 + length) return null;
-
-            const payload = data.slice(4, 4 + length - 4);
-
-            return {
-                type: payload[0],
-                seq: payload[1],
-                cmd: payload[2],
-                data: payload.slice(3)
-            };
+            const lenBytes = [data[1], data[2]];
+            if (crc8(lenBytes) !== data[3]) return null;
+            const len = lenBytes[0] | (lenBytes[1] << 8);
+            if (data.length < 4 + len) return null;
+            const payload = data.slice(4, 4 + len - 4);
+            return { type: payload[0], seq: payload[1], cmd: payload[2], data: payload.slice(3) };
         }
 
-        // Parse heart rate from historical data packet
-        // Parse heart rate from historical data packet
-        // Packet structure (after header):
-        //   0-3:   Unknown (4 bytes)
-        //   4-7:   Unix timestamp (4 bytes, little-endian)
-        //   8-13:  Unknown (6 bytes)
-        //   14:    BPM (1 byte)
-        //   15:    RR interval count (1 byte)
-        //   16-23: RR intervals (up to 4 x 2 bytes)
-        //   24-27: Activity value (4 bytes)
-        function parseHeartRate(data) {
-            if (data.length < 20) return null;
+        // Commands
+        const helloHarvard = () => createPacket(35, 0, 35, [0x00]);
+        const setClock = () => {
+            const t = Math.floor(Date.now() / 1000);
+            return createPacket(35, 0, 10, [t & 0xFF, (t >> 8) & 0xFF, (t >> 16) & 0xFF, (t >> 24) & 0xFF, 0, 0, 0, 0, 0]);
+        };
+        const enterHighFreqSync = () => createPacket(35, 0, 96, []);
+        const enableRealtimeHr = () => createPacket(35, 0, 3, [0x01]);
+        const historyStart = () => createPacket(35, 0, 22, [0x00]);
 
-            // Timestamp at offset 4
-            const timestamp = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
-            // BPM at offset 14
-            const bpm = data[14];
-
-            if (bpm > 0 && bpm < 250) {
-                return { timestamp, bpm };
-            }
-            return null;
-        }
-
-        // Update status
-        function setStatus(icon, text) {
-            document.getElementById('status-icon').textContent = icon;
+        function setStatus(text, connected = false) {
             document.getElementById('status-text').textContent = text;
+            document.getElementById('status-dot').classList.toggle('connected', connected);
         }
 
-        // Show error
         function showError(msg) {
             const box = document.getElementById('error-box');
             box.textContent = msg;
@@ -504,217 +243,135 @@
             setTimeout(() => box.classList.add('hidden'), 5000);
         }
 
-        // Get heart rate zone
         function getZone(bpm) {
-            if (bpm < 60) return { name: 'Resting', class: 'resting' };
-            if (bpm < 100) return { name: 'Normal', class: 'normal' };
-            if (bpm < 140) return { name: 'Elevated', class: 'elevated' };
-            return { name: 'High', class: 'high' };
+            if (bpm < 60) return 'Resting';
+            if (bpm < 100) return 'Normal';
+            if (bpm < 140) return 'Elevated';
+            return 'High';
         }
 
-        // Update heart rate display
         function updateDisplay(bpm) {
-            const circle = document.getElementById('heart-circle');
-            const zone = getZone(bpm);
-
-            // Update BPM
             document.getElementById('bpm-value').textContent = bpm;
-            document.getElementById('zone-label').textContent = zone.name;
+            document.getElementById('zone-label').textContent = getZone(bpm);
 
-            // Update circle color
-            circle.className = 'heart-circle ' + zone.class;
-
-            // Pulse animation
-            circle.classList.add('pulse');
-            setTimeout(() => circle.classList.remove('pulse'), 150);
-
-            // Update stats
+            readings.push({ bpm, time: Date.now() });
+            totalBpm += bpm;
             if (bpm < minBpm) minBpm = bpm;
             if (bpm > maxBpm) maxBpm = bpm;
-            totalBpm += bpm;
-            readings.push({ bpm, time: Date.now() });
 
             document.getElementById('min-bpm').textContent = minBpm;
             document.getElementById('max-bpm').textContent = maxBpm;
             document.getElementById('avg-bpm').textContent = Math.round(totalBpm / readings.length);
             document.getElementById('reading-count').textContent = readings.length + ' readings';
 
-            // Update chart
             chartData.push(bpm);
             if (chartData.length > 60) chartData.shift();
             drawChart();
         }
 
-        // Draw chart
         function drawChart() {
             if (!ctx || chartData.length < 2) return;
+            const w = canvas.width = canvas.offsetWidth * 2;
+            const h = canvas.height = 240;
+            const pad = 10;
 
-            const width = canvas.width = canvas.offsetWidth * 2;
-            const height = canvas.height = 300;
+            ctx.clearRect(0, 0, w, h);
 
-            ctx.clearRect(0, 0, width, height);
-
-            const padding = 20;
-            const chartWidth = width - padding * 2;
-            const chartHeight = height - padding * 2;
-
-            // Find min/max for scaling
-            const min = Math.min(...chartData) - 10;
-            const max = Math.max(...chartData) + 10;
+            const min = Math.min(...chartData) - 5;
+            const max = Math.max(...chartData) + 5;
             const range = max - min || 1;
 
-            // Draw line
             ctx.beginPath();
-            ctx.strokeStyle = '#e74c3c';
-            ctx.lineWidth = 3;
+            ctx.strokeStyle = '#ef4444';
+            ctx.lineWidth = 2;
 
             chartData.forEach((bpm, i) => {
-                const x = padding + (i / (chartData.length - 1)) * chartWidth;
-                const y = height - padding - ((bpm - min) / range) * chartHeight;
-
-                if (i === 0) ctx.moveTo(x, y);
-                else ctx.lineTo(x, y);
+                const x = pad + (i / (chartData.length - 1)) * (w - pad * 2);
+                const y = h - pad - ((bpm - min) / range) * (h - pad * 2);
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
             });
-
             ctx.stroke();
 
-            // Draw fill
-            ctx.lineTo(padding + chartWidth, height - padding);
-            ctx.lineTo(padding, height - padding);
+            ctx.lineTo(w - pad, h - pad);
+            ctx.lineTo(pad, h - pad);
             ctx.closePath();
-            ctx.fillStyle = 'rgba(231, 76, 60, 0.2)';
+            ctx.fillStyle = 'rgba(239, 68, 68, 0.1)';
             ctx.fill();
         }
 
-        // Handle notifications
         function handleNotification(event) {
             const data = new Uint8Array(event.target.value.buffer);
-            const debugEl = document.getElementById('debug-output');
-
-            // Always show debug info
-            const first20 = Array.from(data.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-
             const packet = parsePacket(data);
-
-            if (!packet) {
-                // Show raw data debug
-                let debugText = `Len: ${data.length} | Raw: ${first20}`;
-                if (data.length >= 15) {
-                    debugText += ` | [7]=${data[7]} [10]=${data[10]} [11]=${data[11]} [14]=${data[14]}`;
-                }
-                if (debugEl) debugEl.textContent = debugText;
-                return;
-            }
-
-            // Show parsed packet debug - show first 10 bytes to find BPM
-            let debugText = `Type: ${packet.type} | Len: ${packet.data.length} | Bytes: `;
-            const bytesToShow = Math.min(packet.data.length, 12);
-            for (let i = 0; i < bytesToShow; i++) {
-                debugText += `[${i}]=${packet.data[i]} `;
-            }
-            if (debugEl) debugEl.textContent = debugText;
+            if (!packet) return;
 
             // Historical data (type 47): BPM at offset 14
-            if (packet.type === 47) {
-                const hr = parseHeartRate(packet.data);
-                if (hr) {
-                    updateDisplay(hr.bpm);
-                }
+            if (packet.type === 47 && packet.data.length >= 15) {
+                const bpm = packet.data[14];
+                if (bpm > 0 && bpm < 250) updateDisplay(bpm);
             }
             // Realtime data (type 40): BPM at offset 5
-            else if (packet.type === 40) {
+            else if (packet.type === 40 && packet.data.length >= 6) {
                 const bpm = packet.data[5];
-                if (bpm > 0 && bpm < 250) {
-                    updateDisplay(bpm);
-                }
-            }
-            // Metadata (type 49) - history end marker
-            else if (packet.type === 49 && packet.cmd === 2) {
-                if (packet.data.length >= 10) {
-                    const dataValue = packet.data[6] | (packet.data[7] << 8) |
-                                     (packet.data[8] << 16) | (packet.data[9] << 24);
-                    cmdChar.writeValueWithoutResponse(historyEnd(dataValue));
-                }
+                if (bpm > 0 && bpm < 250) updateDisplay(bpm);
             }
         }
 
-        // Connect to Whoop
         async function connectToWhoop() {
             try {
-                setStatus('🔍', 'Scanning for Whoop devices...');
+                setStatus('Scanning...');
                 document.getElementById('connect-btn').disabled = true;
 
-                // Request device
                 device = await navigator.bluetooth.requestDevice({
                     filters: [{ services: [WHOOP_SERVICE] }],
                     optionalServices: [WHOOP_SERVICE]
                 });
 
-                setStatus('📶', 'Connecting to ' + (device.name || 'Whoop') + '...');
-
-                // Connect
+                setStatus('Connecting...');
                 const server = await device.gatt.connect();
                 const service = await server.getPrimaryService(WHOOP_SERVICE);
 
-                // Get characteristics
                 cmdChar = await service.getCharacteristic(CMD_TO_STRAP);
                 const dataChar = await service.getCharacteristic(DATA_FROM_STRAP);
 
-                // Subscribe to notifications
-                setStatus('📡', 'Subscribing to data...');
                 await dataChar.startNotifications();
                 dataChar.addEventListener('characteristicvaluechanged', handleNotification);
 
-                // Try to get command responses too
                 try {
                     const cmdFromChar = await service.getCharacteristic(CMD_FROM_STRAP);
                     await cmdFromChar.startNotifications();
                     cmdFromChar.addEventListener('characteristicvaluechanged', handleNotification);
-                } catch (e) {
-                    // Optional, continue without it
-                }
+                } catch (e) {}
 
-                // Initialize device
-                setStatus('⚙️', 'Initializing...');
                 await cmdChar.writeValueWithoutResponse(helloHarvard());
                 await sleep(100);
                 await cmdChar.writeValueWithoutResponse(setClock());
                 await sleep(100);
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
                 await sleep(100);
-                // Enable real-time heart rate instead of downloading history
                 await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
 
-                setStatus('✅', 'Connected - Receiving data');
+                setStatus('Connected', true);
                 document.getElementById('data-section').classList.remove('hidden');
                 document.getElementById('connect-btn').textContent = 'Disconnect';
                 document.getElementById('connect-btn').onclick = disconnect;
                 document.getElementById('connect-btn').disabled = false;
 
-                // Handle disconnect
                 device.addEventListener('gattserverdisconnected', () => {
-                    setStatus('❌', 'Disconnected');
-                    saveSession();
+                    setStatus('Disconnected');
                     resetUI();
                 });
 
             } catch (error) {
-                console.error(error);
                 showError('Connection failed: ' + error.message);
-                setStatus('❌', 'Connection failed');
+                setStatus('Not connected');
                 resetUI();
             }
         }
 
-        function sleep(ms) {
-            return new Promise(resolve => setTimeout(resolve, ms));
-        }
+        const sleep = ms => new Promise(r => setTimeout(r, ms));
 
         function disconnect() {
-            if (device && device.gatt.connected) {
-                device.gatt.disconnect();
-            }
-            saveSession();
+            if (device?.gatt.connected) device.gatt.disconnect();
             resetUI();
         }
 
@@ -722,59 +379,6 @@
             document.getElementById('connect-btn').textContent = 'Connect to Whoop';
             document.getElementById('connect-btn').onclick = connectToWhoop;
             document.getElementById('connect-btn').disabled = false;
-        }
-
-        // Local Storage
-        function saveSession() {
-            if (readings.length === 0) return;
-
-            const sessions = JSON.parse(localStorage.getItem('whoopSessions') || '[]');
-            sessions.unshift({
-                date: new Date().toISOString(),
-                readings: readings.length,
-                min: minBpm,
-                max: maxBpm,
-                avg: Math.round(totalBpm / readings.length)
-            });
-
-            // Keep last 10 sessions
-            if (sessions.length > 10) sessions.pop();
-
-            localStorage.setItem('whoopSessions', JSON.stringify(sessions));
-            loadHistory();
-
-            // Reset for next session
-            readings = [];
-            chartData = [];
-            minBpm = 999;
-            maxBpm = 0;
-            totalBpm = 0;
-        }
-
-        function loadHistory() {
-            const sessions = JSON.parse(localStorage.getItem('whoopSessions') || '[]');
-            const list = document.getElementById('history-list');
-
-            if (sessions.length === 0) {
-                list.innerHTML = '<div class="history-item" style="color: #666;">No saved sessions</div>';
-                return;
-            }
-
-            list.innerHTML = sessions.map(s => {
-                const date = new Date(s.date);
-                const dateStr = date.toLocaleDateString() + ' ' + date.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'});
-                return `
-                    <div class="history-item">
-                        <span>${dateStr}</span>
-                        <span>${s.avg} avg (${s.min}-${s.max})</span>
-                    </div>
-                `;
-            }).join('');
-        }
-
-        function clearHistory() {
-            localStorage.removeItem('whoopSessions');
-            loadHistory();
         }
     </script>
 </body>
