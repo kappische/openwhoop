@@ -431,6 +431,11 @@
             return createPacket(35, 0, 22, [0x00]);
         }
 
+        // Enable real-time heart rate (command 3)
+        function enableRealtimeHr() {
+            return createPacket(35, 0, 3, [0x01]);
+        }
+
         function historyEnd(dataValue) {
             const dataBytes = [
                 dataValue & 0xFF,
@@ -608,8 +613,8 @@
             }
             if (debugEl) debugEl.textContent = debugText;
 
-            // Historical data (type 47)
-            if (packet.type === 47) {
+            // Historical data (type 47) or Realtime data (type 40)
+            if (packet.type === 47 || packet.type === 40) {
                 const hr = parseHeartRate(packet.data);
                 if (hr) {
                     updateDisplay(hr.bpm);
@@ -669,7 +674,8 @@
                 await sleep(100);
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
                 await sleep(100);
-                await cmdChar.writeValueWithoutResponse(historyStart());
+                // Enable real-time heart rate instead of downloading history
+                await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
 
                 setStatus('✅', 'Connected - Receiving data');
                 document.getElementById('data-section').classList.remove('hidden');
