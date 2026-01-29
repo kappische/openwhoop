@@ -579,9 +579,37 @@
         // Handle notifications
         function handleNotification(event) {
             const data = new Uint8Array(event.target.value.buffer);
+
+            // Debug: show raw bytes in console and on screen
+            const hexStr = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            console.log('Raw data:', hexStr);
+
             const packet = parsePacket(data);
 
-            if (!packet) return;
+            if (!packet) {
+                // Maybe it's not a framed packet - try parsing raw data directly
+                // Some BLE implementations might send just the payload
+                if (data.length >= 20) {
+                    // Try different offsets to find BPM
+                    const debug = `Raw[10]=${data[10]} Raw[14]=${data[14]} Raw[11]=${data[11]} Raw[7]=${data[7]}`;
+                    console.log(debug);
+                    document.getElementById('status-text').textContent = debug;
+
+                    // Try offset 7 (sometimes BPM is earlier in raw notifications)
+                    const possibleBpm = data[7];
+                    if (possibleBpm > 30 && possibleBpm < 220) {
+                        updateDisplay(possibleBpm);
+                        return;
+                    }
+                }
+                return;
+            }
+
+            // Debug: show packet info
+            console.log('Packet type:', packet.type, 'cmd:', packet.cmd, 'data length:', packet.data.length);
+            if (packet.data.length >= 15) {
+                console.log('data[10]:', packet.data[10], 'data[14]:', packet.data[14]);
+            }
 
             // Historical data (type 47)
             if (packet.type === 47) {
