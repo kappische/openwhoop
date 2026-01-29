@@ -606,10 +606,11 @@
                 return;
             }
 
-            // Show parsed packet debug
-            let debugText = `Type: ${packet.type} | Cmd: ${packet.cmd} | DataLen: ${packet.data.length}`;
-            if (packet.data.length >= 15) {
-                debugText += ` | d[10]=${packet.data[10]} d[11]=${packet.data[11]} d[14]=${packet.data[14]}`;
+            // Show parsed packet debug - show first 10 bytes to find BPM
+            let debugText = `Type: ${packet.type} | Len: ${packet.data.length} | Bytes: `;
+            const bytesToShow = Math.min(packet.data.length, 12);
+            for (let i = 0; i < bytesToShow; i++) {
+                debugText += `[${i}]=${packet.data[i]} `;
             }
             if (debugEl) debugEl.textContent = debugText;
 
