@@ -614,11 +614,18 @@
             }
             if (debugEl) debugEl.textContent = debugText;
 
-            // Historical data (type 47) or Realtime data (type 40)
-            if (packet.type === 47 || packet.type === 40) {
+            // Historical data (type 47): BPM at offset 14
+            if (packet.type === 47) {
                 const hr = parseHeartRate(packet.data);
                 if (hr) {
                     updateDisplay(hr.bpm);
+                }
+            }
+            // Realtime data (type 40): BPM at offset 5
+            else if (packet.type === 40) {
+                const bpm = packet.data[5];
+                if (bpm > 0 && bpm < 250) {
+                    updateDisplay(bpm);
                 }
             }
             // Metadata (type 49) - history end marker
