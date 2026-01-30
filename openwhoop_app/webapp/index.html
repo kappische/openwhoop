@@ -1113,6 +1113,29 @@
         let debugEnabled = true;
         let packetCount = 0;
 
+        // Cached metric values (updated less frequently)
+        let cachedMetrics = {
+            rhr: null,
+            rhrLastUpdate: 0,
+            hrv: null,
+            hrvLastUpdate: 0,
+            resp: null,
+            respLastUpdate: 0,
+            spo2: null,
+            spo2LastUpdate: 0,
+            temp: null,
+            tempLastUpdate: 0
+        };
+
+        // Update intervals (in milliseconds)
+        const UPDATE_INTERVALS = {
+            rhr: 30000,    // 30 seconds - RHR is normally daily, but update periodically
+            hrv: 60000,    // 60 seconds - HRV is normally daily
+            resp: 60000,   // 60 seconds - Respiratory rate is daily
+            spo2: 0,       // Only set once per session (daily metric)
+            temp: 0        // Only set once per session (daily metric)
+        };
+
         // Debug logging
         function debug(msg) {
             if (!debugEnabled) return;
@@ -1315,15 +1338,17 @@
         }
 
         function updateMetrics(bpm, rawData) {
-            // Update HR display
+            const now = Date.now();
+
+            // REAL-TIME: Update HR display immediately
             document.getElementById('hr-value').textContent = bpm;
 
-            readings.push({ bpm, time: Date.now() });
+            readings.push({ bpm, time: now });
             totalBpm += bpm;
             if (bpm < minBpm) minBpm = bpm;
             if (bpm > maxBpm) maxBpm = bpm;
 
-            // Calculate HR Zone (assuming max HR of 200)
+            // REAL-TIME: Calculate HR Zone
             const maxHR = 200;
             const hrPercent = (bpm / maxHR) * 100;
             let zone = 0;
@@ -1334,40 +1359,44 @@
             else if (hrPercent >= 50) zone = 1;
             document.getElementById('hr-zone').textContent = `Zone ${zone}`;
 
-            // RHR calculation (lowest 10% of readings)
+            // Track lowest readings for RHR calculation
             lowestReadings.push(bpm);
             lowestReadings.sort((a, b) => a - b);
             if (lowestReadings.length > 100) lowestReadings = lowestReadings.slice(0, 100);
-            const rhrCount = Math.max(5, Math.floor(lowestReadings.length * 0.1));
-            const rhr = Math.round(lowestReadings.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
 
-            // Update displays
-            document.getElementById('rhr-value').textContent = rhr;
-            document.getElementById('min-value').textContent = minBpm;
-            document.getElementById('max-value').textContent = maxBpm;
-            document.getElementById('avg-value').textContent = Math.round(totalBpm / readings.length);
+            // THROTTLED: RHR (every 30 seconds)
+            if (now - cachedMetrics.rhrLastUpdate > UPDATE_INTERVALS.rhr) {
+                const rhrCount = Math.max(5, Math.floor(lowestReadings.length * 0.1));
+                cachedMetrics.rhr = Math.round(lowestReadings.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
+                cachedMetrics.rhrLastUpdate = now;
 
-            // RHR status
-            const rhrStatus = document.getElementById('rhr-status');
-            if (rhr < 60) {
-                rhrStatus.textContent = `low < 60`;
-            } else if (rhr < 70) {
-                rhrStatus.textContent = `good < 70`;
-            } else {
-                rhrStatus.textContent = `elevated > 70`;
-                rhrStatus.classList.add('warning');
+                document.getElementById('rhr-value').textContent = cachedMetrics.rhr;
+
+                const rhrStatus = document.getElementById('rhr-status');
+                rhrStatus.classList.remove('warning');
+                if (cachedMetrics.rhr < 60) {
+                    rhrStatus.textContent = `low < 60`;
+                } else if (cachedMetrics.rhr < 70) {
+                    rhrStatus.textContent = `good < 70`;
+                } else {
+                    rhrStatus.textContent = `elevated > 70`;
+                    rhrStatus.classList.add('warning');
+                }
             }
 
-            // HRV calculation (simplified - uses HR variability as proxy)
-            if (readings.length > 10) {
-                const recentHR = readings.slice(-10).map(r => r.bpm);
-                const hrv = Math.round(standardDeviation(recentHR) * 15);
-                document.getElementById('hrv-value').textContent = hrv;
+            // THROTTLED: HRV (every 60 seconds)
+            if (readings.length > 10 && now - cachedMetrics.hrvLastUpdate > UPDATE_INTERVALS.hrv) {
+                const recentHR = readings.slice(-30).map(r => r.bpm);
+                cachedMetrics.hrv = Math.round(standardDeviation(recentHR) * 15);
+                cachedMetrics.hrvLastUpdate = now;
+
+                document.getElementById('hrv-value').textContent = cachedMetrics.hrv;
 
                 const hrvStatus = document.getElementById('hrv-status');
-                if (hrv > 50) {
+                hrvStatus.classList.remove('warning');
+                if (cachedMetrics.hrv > 50) {
                     hrvStatus.textContent = `elevated > 50`;
-                } else if (hrv > 30) {
+                } else if (cachedMetrics.hrv > 30) {
                     hrvStatus.textContent = `normal 30-50`;
                 } else {
                     hrvStatus.textContent = `low < 30`;
@@ -1375,37 +1404,51 @@
                 }
             }
 
-            // Respiratory rate estimate (12-20 is normal for adults at rest)
-            const respRate = Math.round(12 + (bpm - 60) / 10);
-            const clampedResp = Math.max(10, Math.min(25, respRate));
-            document.getElementById('resp-value').textContent = clampedResp.toFixed(1);
-            const respStatus = document.getElementById('resp-status');
-            if (clampedResp >= 12 && clampedResp <= 20) {
-                respStatus.textContent = `within 12 - 20`;
-            } else {
-                respStatus.textContent = clampedResp < 12 ? `low < 12` : `elevated > 20`;
-                respStatus.classList.add('warning');
+            // THROTTLED: Respiratory rate (every 60 seconds)
+            if (now - cachedMetrics.respLastUpdate > UPDATE_INTERVALS.resp) {
+                // Use average of recent readings for more stability
+                const recentAvg = readings.slice(-20).reduce((a, b) => a + b.bpm, 0) / Math.min(readings.length, 20);
+                const respRate = 12 + (recentAvg - 60) / 10;
+                cachedMetrics.resp = Math.max(10, Math.min(25, respRate));
+                cachedMetrics.respLastUpdate = now;
+
+                document.getElementById('resp-value').textContent = cachedMetrics.resp.toFixed(1);
+                const respStatus = document.getElementById('resp-status');
+                respStatus.classList.remove('warning');
+                if (cachedMetrics.resp >= 12 && cachedMetrics.resp <= 20) {
+                    respStatus.textContent = `within 12 - 20`;
+                } else {
+                    respStatus.textContent = cachedMetrics.resp < 12 ? `low < 12` : `elevated > 20`;
+                    respStatus.classList.add('warning');
+                }
             }
 
-            // SpO2 estimate (simulate 95-100%)
-            const spo2 = Math.round(95 + Math.random() * 4);
-            document.getElementById('spo2-value').textContent = spo2;
-
-            // Skin temp estimate (simulate baseline deviation)
-            const tempDev = ((Math.random() - 0.5) * 2).toFixed(1);
-            document.getElementById('temp-value').textContent = tempDev > 0 ? `+${tempDev}` : tempDev;
-            const tempStatus = document.getElementById('temp-status');
-            if (Math.abs(tempDev) < 0.5) {
-                tempStatus.textContent = `normal`;
-            } else {
-                tempStatus.textContent = tempDev < 0 ? `low < -0.5` : `elevated > 0.5`;
+            // ONCE PER SESSION: SpO2 (simulated daily metric)
+            if (cachedMetrics.spo2 === null) {
+                cachedMetrics.spo2 = Math.round(95 + Math.random() * 4);
+                cachedMetrics.spo2LastUpdate = now;
+                document.getElementById('spo2-value').textContent = cachedMetrics.spo2;
             }
 
-            // Session status
-            document.getElementById('session-status').innerHTML =
-                `<span id="min-value">${minBpm}</span> - <span id="max-value">${maxBpm}</span> bpm`;
+            // ONCE PER SESSION: Skin temp (simulated daily metric)
+            if (cachedMetrics.temp === null) {
+                cachedMetrics.temp = ((Math.random() - 0.5) * 2).toFixed(1);
+                cachedMetrics.tempLastUpdate = now;
+                document.getElementById('temp-value').textContent = cachedMetrics.temp > 0 ? `+${cachedMetrics.temp}` : cachedMetrics.temp;
+                const tempStatus = document.getElementById('temp-status');
+                if (Math.abs(cachedMetrics.temp) < 0.5) {
+                    tempStatus.textContent = `normal`;
+                } else {
+                    tempStatus.textContent = cachedMetrics.temp < 0 ? `low < -0.5` : `elevated > 0.5`;
+                }
+            }
 
-            // Chart
+            // REAL-TIME: Session stats (min/max/avg)
+            document.getElementById('min-value').textContent = minBpm;
+            document.getElementById('max-value').textContent = maxBpm;
+            document.getElementById('avg-value').textContent = Math.round(totalBpm / readings.length);
+
+            // REAL-TIME: Chart
             chartData.push(bpm);
             if (chartData.length > 60) chartData.shift();
             drawChart();
