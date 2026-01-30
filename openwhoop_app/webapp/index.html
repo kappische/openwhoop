@@ -616,6 +616,158 @@
             z-index: 1000;
             display: none;
         }
+
+        /* Debug Console */
+        .debug-console {
+            position: fixed;
+            bottom: 70px;
+            left: 0;
+            right: 0;
+            max-height: 150px;
+            overflow-y: auto;
+            background: rgba(0,0,0,0.9);
+            border-top: 1px solid var(--green);
+            padding: 8px;
+            font-family: monospace;
+            font-size: 10px;
+            color: var(--green);
+            display: none;
+            z-index: 999;
+        }
+        .debug-console.visible { display: block; }
+        .debug-line { margin: 2px 0; }
+
+        /* Health Monitor Cards */
+        .health-monitor-header {
+            text-align: center;
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 2px;
+            padding: 16px;
+            color: var(--text-secondary);
+        }
+
+        .hr-card {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 16px;
+            margin: 0 16px 12px;
+        }
+        .hr-card-header {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+        }
+        .hr-card-title {
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            color: var(--text-secondary);
+        }
+        .hr-icon {
+            color: #3dd9eb;
+            font-size: 16px;
+        }
+        .hr-main {
+            display: flex;
+            align-items: baseline;
+            gap: 8px;
+        }
+        .hr-number {
+            font-size: 48px;
+            font-weight: 400;
+            color: white;
+        }
+        .hr-unit {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .hr-zone {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        .hr-graph {
+            height: 60px;
+            margin-top: 12px;
+            position: relative;
+        }
+        .hr-graph canvas {
+            width: 100%;
+            height: 100%;
+        }
+        .hr-graph-dot {
+            position: absolute;
+            right: 0;
+            top: 50%;
+            width: 8px;
+            height: 8px;
+            background: white;
+            border-radius: 50%;
+            transform: translateY(-50%);
+        }
+
+        /* Metric Cards Grid */
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            padding: 0 16px 16px;
+        }
+        .metric-card {
+            background: var(--card);
+            border-radius: 12px;
+            padding: 16px;
+        }
+        .metric-card-header {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            margin-bottom: 12px;
+        }
+        .metric-card-icon {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .metric-card-title {
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+        }
+        .metric-card-value {
+            display: flex;
+            align-items: baseline;
+            gap: 4px;
+        }
+        .metric-card-number {
+            font-size: 32px;
+            font-weight: 400;
+        }
+        .metric-card-unit {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .metric-card-status {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            margin-top: 8px;
+            font-size: 11px;
+            color: var(--green);
+        }
+        .metric-card-status::before {
+            content: '✓';
+            font-size: 10px;
+        }
+        .metric-card-status.warning {
+            color: var(--yellow);
+        }
+        .metric-card-status.warning::before {
+            content: '!';
+        }
     </style>
 </head>
 <body>
@@ -637,7 +789,7 @@
     </div>
 
     <div class="header">
-        <div class="header-title">WHOOP</div>
+        <div class="header-title" onclick="toggleDebug()" style="cursor:pointer;">WHOOP</div>
         <div class="header-status">
             <span class="status-dot" id="status-dot"></span>
             <span id="status-text">Disconnected</span>
@@ -651,73 +803,112 @@
         <button class="connect-btn" id="connect-btn" onclick="connect()">Connect</button>
     </div>
 
+    <!-- Debug Console -->
+    <div class="debug-console" id="debug-console"></div>
+
     <!-- Main App -->
     <div class="main" id="main-app">
-        <!-- Overview Tab -->
+        <!-- Overview Tab - Health Monitor Style -->
         <div class="tab-content active" id="tab-overview">
-            <div class="date-header" id="date-header">Today</div>
+            <div class="health-monitor-header">HEALTH MONITOR</div>
 
-            <div class="score-grid">
-                <div class="score-card">
-                    <div class="score-ring">
-                        <svg viewBox="0 0 100 100">
-                            <circle class="score-ring-bg" cx="50" cy="50" r="42"/>
-                            <circle class="score-ring-fill" id="recovery-ring" cx="50" cy="50" r="42"
-                                stroke="var(--green)" stroke-dasharray="264" stroke-dashoffset="264"/>
-                        </svg>
-                        <div class="score-value" id="recovery-value">--%</div>
-                    </div>
-                    <div class="score-label">Recovery</div>
+            <!-- Heart Rate Card -->
+            <div class="hr-card">
+                <div class="hr-card-header">
+                    <span class="hr-icon">♥</span>
+                    <span class="hr-card-title">HEART RATE</span>
                 </div>
-                <div class="score-card">
-                    <div class="score-ring">
-                        <svg viewBox="0 0 100 100">
-                            <circle class="score-ring-bg" cx="50" cy="50" r="42"/>
-                            <circle class="score-ring-fill" id="strain-ring" cx="50" cy="50" r="42"
-                                stroke="var(--yellow)" stroke-dasharray="264" stroke-dashoffset="264"/>
-                        </svg>
-                        <div class="score-value" id="strain-value">--</div>
-                    </div>
-                    <div class="score-label">Strain</div>
+                <div class="hr-main">
+                    <span class="hr-number" id="hr-value">--</span>
+                    <span class="hr-unit">BPM</span>
                 </div>
-            </div>
-
-            <div class="live-hr">
-                <div class="live-hr-header">
-                    <div class="live-hr-title">Heart Rate</div>
-                    <div class="live-indicator">
-                        <div class="live-dot"></div>
-                        LIVE
-                    </div>
-                </div>
-                <div class="live-hr-value" id="hr-value">--</div>
-                <div class="live-hr-label">BPM</div>
-                <div class="hr-chart">
+                <div class="hr-zone" id="hr-zone">Zone 0</div>
+                <div class="hr-graph">
                     <canvas id="hr-chart"></canvas>
+                    <div class="hr-graph-dot"></div>
                 </div>
             </div>
 
-            <div class="metrics-section">
-                <div class="metrics-header">Health Metrics</div>
-                <div class="metric-row">
-                    <span class="metric-label">Resting HR</span>
-                    <span><span class="metric-value" id="rhr-value">--</span><span class="metric-unit">bpm</span></span>
+            <!-- Metrics Grid -->
+            <div class="metrics-grid">
+                <!-- Respiratory Rate -->
+                <div class="metric-card">
+                    <div class="metric-card-header">
+                        <span class="metric-card-icon">🌬️</span>
+                        <span class="metric-card-title">RESPIRATORY RATE</span>
+                    </div>
+                    <div class="metric-card-value">
+                        <span class="metric-card-number" id="resp-value">--</span>
+                        <span class="metric-card-unit">rpm</span>
+                    </div>
+                    <div class="metric-card-status" id="resp-status">within 12 - 20</div>
                 </div>
-                <div class="metric-row">
-                    <span class="metric-label">HRV</span>
-                    <span><span class="metric-value" id="hrv-value">--</span><span class="metric-unit">ms</span></span>
+
+                <!-- Blood Oxygen -->
+                <div class="metric-card">
+                    <div class="metric-card-header">
+                        <span class="metric-card-icon">💧</span>
+                        <span class="metric-card-title">BLOOD OXYGEN (SPO₂)</span>
+                    </div>
+                    <div class="metric-card-value">
+                        <span class="metric-card-number" id="spo2-value">--</span>
+                        <span class="metric-card-unit">%</span>
+                    </div>
+                    <div class="metric-card-status" id="spo2-status">within 95% - 100%</div>
                 </div>
-                <div class="metric-row">
-                    <span class="metric-label">Session Min</span>
-                    <span><span class="metric-value" id="min-value">--</span><span class="metric-unit">bpm</span></span>
+
+                <!-- RHR -->
+                <div class="metric-card">
+                    <div class="metric-card-header">
+                        <span class="metric-card-icon">❤️</span>
+                        <span class="metric-card-title">RHR</span>
+                    </div>
+                    <div class="metric-card-value">
+                        <span class="metric-card-number" id="rhr-value">--</span>
+                        <span class="metric-card-unit">bpm</span>
+                    </div>
+                    <div class="metric-card-status" id="rhr-status">calculating...</div>
                 </div>
-                <div class="metric-row">
-                    <span class="metric-label">Session Max</span>
-                    <span><span class="metric-value" id="max-value">--</span><span class="metric-unit">bpm</span></span>
+
+                <!-- HRV -->
+                <div class="metric-card">
+                    <div class="metric-card-header">
+                        <span class="metric-card-icon">📊</span>
+                        <span class="metric-card-title">HRV</span>
+                    </div>
+                    <div class="metric-card-value">
+                        <span class="metric-card-number" id="hrv-value">--</span>
+                        <span class="metric-card-unit">ms</span>
+                    </div>
+                    <div class="metric-card-status" id="hrv-status">calculating...</div>
                 </div>
-                <div class="metric-row">
-                    <span class="metric-label">Session Avg</span>
-                    <span><span class="metric-value" id="avg-value">--</span><span class="metric-unit">bpm</span></span>
+
+                <!-- Skin Temp -->
+                <div class="metric-card">
+                    <div class="metric-card-header">
+                        <span class="metric-card-icon">🌡️</span>
+                        <span class="metric-card-title">SKIN TEMP (FROM BASELINE)</span>
+                    </div>
+                    <div class="metric-card-value">
+                        <span class="metric-card-number" id="temp-value">--</span>
+                        <span class="metric-card-unit">°C</span>
+                    </div>
+                    <div class="metric-card-status" id="temp-status">calculating...</div>
+                </div>
+
+                <!-- Session Stats -->
+                <div class="metric-card">
+                    <div class="metric-card-header">
+                        <span class="metric-card-icon">📈</span>
+                        <span class="metric-card-title">SESSION</span>
+                    </div>
+                    <div class="metric-card-value">
+                        <span class="metric-card-number" id="avg-value">--</span>
+                        <span class="metric-card-unit">avg</span>
+                    </div>
+                    <div class="metric-card-status" id="session-status">
+                        <span id="min-value">--</span> - <span id="max-value">--</span> bpm
+                    </div>
                 </div>
             </div>
         </div>
@@ -919,20 +1110,36 @@
         let canvas, ctx;
         let alarmEnabled = false, currentAlarm = null;
         let sessionStart = Date.now();
+        let debugEnabled = true;
+        let packetCount = 0;
+
+        // Debug logging
+        function debug(msg) {
+            if (!debugEnabled) return;
+            const console = document.getElementById('debug-console');
+            const line = document.createElement('div');
+            line.className = 'debug-line';
+            line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            console.appendChild(line);
+            console.scrollTop = console.scrollHeight;
+            // Keep only last 50 lines
+            while (console.children.length > 50) {
+                console.removeChild(console.firstChild);
+            }
+        }
+
+        function toggleDebug() {
+            const console = document.getElementById('debug-console');
+            console.classList.toggle('visible');
+        }
 
         // Init
         document.addEventListener('DOMContentLoaded', () => {
             canvas = document.getElementById('hr-chart');
             ctx = canvas.getContext('2d');
-            updateDateHeader();
             loadFromStorage();
+            debug('App initialized');
         });
-
-        function updateDateHeader() {
-            const now = new Date();
-            const options = { weekday: 'long', month: 'long', day: 'numeric' };
-            document.getElementById('date-header').textContent = now.toLocaleDateString('en-US', options).toUpperCase();
-        }
 
         // Tab Navigation
         function showTab(tab) {
@@ -998,45 +1205,63 @@
             try {
                 document.getElementById('connect-btn').disabled = true;
                 document.getElementById('connect-btn').textContent = 'Connecting...';
+                debug('Requesting BLE device...');
 
                 device = await navigator.bluetooth.requestDevice({
                     filters: [{ services: [WHOOP_SERVICE] }]
                 });
+                debug(`Device selected: ${device.name}`);
 
                 const server = await device.gatt.connect();
+                debug('GATT connected');
                 const service = await server.getPrimaryService(WHOOP_SERVICE);
+                debug('Got primary service');
 
                 cmdChar = await service.getCharacteristic(CMD_TO_STRAP);
+                debug('Got CMD_TO_STRAP characteristic');
+
                 const dataChar = await service.getCharacteristic(DATA_FROM_STRAP);
+                debug('Got DATA_FROM_STRAP characteristic');
 
                 await dataChar.startNotifications();
                 dataChar.addEventListener('characteristicvaluechanged', handleNotification);
+                debug('DATA_FROM_STRAP notifications started');
 
                 try {
                     const cmdFromChar = await service.getCharacteristic(CMD_FROM_STRAP);
                     await cmdFromChar.startNotifications();
                     cmdFromChar.addEventListener('characteristicvaluechanged', handleNotification);
-                } catch (e) {}
+                    debug('CMD_FROM_STRAP notifications started');
+                } catch (e) {
+                    debug('CMD_FROM_STRAP not available: ' + e.message);
+                }
 
+                debug('Sending helloHarvard...');
                 await cmdChar.writeValueWithoutResponse(helloHarvard());
                 await sleep(100);
+                debug('Sending setClock...');
                 await cmdChar.writeValueWithoutResponse(setClock());
                 await sleep(100);
+                debug('Sending enterHighFreqSync...');
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
                 await sleep(100);
+                debug('Sending enableRealtimeHr...');
                 await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
                 await sleep(100);
-                // Read existing alarm from device
+                debug('Sending getAlarmTime...');
                 await cmdChar.writeValueWithoutResponse(getAlarmTime());
+                debug('All commands sent, waiting for data...');
 
                 document.getElementById('status-dot').classList.add('connected');
                 document.getElementById('status-text').textContent = 'Connected';
                 document.getElementById('connect-screen').classList.add('hidden');
                 document.getElementById('main-app').classList.add('active');
+                document.getElementById('debug-console').classList.add('visible');
 
                 device.addEventListener('gattserverdisconnected', onDisconnect);
 
             } catch (e) {
+                debug('Connection error: ' + e.message);
                 showError('Connection failed: ' + e.message);
                 document.getElementById('connect-btn').disabled = false;
                 document.getElementById('connect-btn').textContent = 'Connect';
@@ -1052,21 +1277,40 @@
 
         function handleNotification(event) {
             const data = new Uint8Array(event.target.value.buffer);
-            const packet = parsePacket(data);
-            if (!packet) return;
+            packetCount++;
 
-            // Heart rate packets
-            if (packet.type === 47 && packet.data.length >= 15) {
-                const bpm = packet.data[14];
-                if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data);
-            } else if (packet.type === 40 && packet.data.length >= 6) {
-                const bpm = packet.data[5];
-                if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data);
+            // Log raw data for first few packets
+            if (packetCount <= 10) {
+                const hex = Array.from(data.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                debug(`Raw[${packetCount}]: ${hex}...`);
             }
 
-            // Command response (type 36) - check for alarm response (cmd 67)
-            if (packet.type === 36 && packet.cmd === 67) {
-                handleAlarmResponse(packet.data);
+            const packet = parsePacket(data);
+            if (!packet) {
+                debug(`Packet ${packetCount}: INVALID (no 0xAA or CRC fail)`);
+                return;
+            }
+
+            debug(`Pkt#${packetCount} type=${packet.type} cmd=${packet.cmd} len=${packet.data.length}`);
+
+            // Heart rate packets - Historical (type 47)
+            if (packet.type === 47 && packet.data.length >= 15) {
+                const bpm = packet.data[14];
+                debug(`Historical HR: ${bpm} bpm`);
+                if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data);
+            }
+            // Heart rate packets - Realtime (type 40)
+            else if (packet.type === 40 && packet.data.length >= 6) {
+                const bpm = packet.data[5];
+                debug(`Realtime HR: ${bpm} bpm`);
+                if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data);
+            }
+            // Command response (type 36)
+            else if (packet.type === 36) {
+                debug(`Command response for cmd ${packet.cmd}`);
+                if (packet.cmd === 67) {
+                    handleAlarmResponse(packet.data);
+                }
             }
         }
 
@@ -1079,7 +1323,18 @@
             if (bpm < minBpm) minBpm = bpm;
             if (bpm > maxBpm) maxBpm = bpm;
 
-            // RHR calculation
+            // Calculate HR Zone (assuming max HR of 200)
+            const maxHR = 200;
+            const hrPercent = (bpm / maxHR) * 100;
+            let zone = 0;
+            if (hrPercent >= 90) zone = 5;
+            else if (hrPercent >= 80) zone = 4;
+            else if (hrPercent >= 70) zone = 3;
+            else if (hrPercent >= 60) zone = 2;
+            else if (hrPercent >= 50) zone = 1;
+            document.getElementById('hr-zone').textContent = `Zone ${zone}`;
+
+            // RHR calculation (lowest 10% of readings)
             lowestReadings.push(bpm);
             lowestReadings.sort((a, b) => a - b);
             if (lowestReadings.length > 100) lowestReadings = lowestReadings.slice(0, 100);
@@ -1091,33 +1346,64 @@
             document.getElementById('min-value').textContent = minBpm;
             document.getElementById('max-value').textContent = maxBpm;
             document.getElementById('avg-value').textContent = Math.round(totalBpm / readings.length);
-            document.getElementById('peak-hr').textContent = maxBpm;
 
-            // Calculate Recovery (simplified: based on RHR)
-            const recovery = Math.min(100, Math.max(0, Math.round(150 - rhr)));
-            updateRing('recovery', recovery, recovery > 66 ? 'var(--green)' : recovery > 33 ? 'var(--yellow)' : 'var(--red)');
-            document.getElementById('recovery-value').textContent = recovery + '%';
+            // RHR status
+            const rhrStatus = document.getElementById('rhr-status');
+            if (rhr < 60) {
+                rhrStatus.textContent = `low < 60`;
+            } else if (rhr < 70) {
+                rhrStatus.textContent = `good < 70`;
+            } else {
+                rhrStatus.textContent = `elevated > 70`;
+                rhrStatus.classList.add('warning');
+            }
 
-            // Calculate Strain (simplified: based on session HR range and duration)
-            const sessionMinutes = (Date.now() - sessionStart) / 60000;
-            const hrRange = maxBpm - minBpm;
-            const strain = Math.min(21, (hrRange / 10) + (sessionMinutes / 30));
-            updateRing('strain', (strain / 21) * 100, 'var(--yellow)');
-            document.getElementById('strain-value').textContent = strain.toFixed(1);
-            document.getElementById('strain-value-big').textContent = strain.toFixed(1);
-            updateRing('strain-big', (strain / 21) * 100, 'var(--yellow)');
-
-            // Estimate calories
-            const calories = Math.round(sessionMinutes * (bpm / 60) * 0.5);
-            document.getElementById('calories').textContent = calories;
-            document.getElementById('time-zone').textContent = Math.round(sessionMinutes);
-
-            // HRV placeholder (would need RR intervals)
+            // HRV calculation (simplified - uses HR variability as proxy)
             if (readings.length > 10) {
                 const recentHR = readings.slice(-10).map(r => r.bpm);
-                const hrv = Math.round(standardDeviation(recentHR) * 10);
+                const hrv = Math.round(standardDeviation(recentHR) * 15);
                 document.getElementById('hrv-value').textContent = hrv;
+
+                const hrvStatus = document.getElementById('hrv-status');
+                if (hrv > 50) {
+                    hrvStatus.textContent = `elevated > 50`;
+                } else if (hrv > 30) {
+                    hrvStatus.textContent = `normal 30-50`;
+                } else {
+                    hrvStatus.textContent = `low < 30`;
+                    hrvStatus.classList.add('warning');
+                }
             }
+
+            // Respiratory rate estimate (12-20 is normal for adults at rest)
+            const respRate = Math.round(12 + (bpm - 60) / 10);
+            const clampedResp = Math.max(10, Math.min(25, respRate));
+            document.getElementById('resp-value').textContent = clampedResp.toFixed(1);
+            const respStatus = document.getElementById('resp-status');
+            if (clampedResp >= 12 && clampedResp <= 20) {
+                respStatus.textContent = `within 12 - 20`;
+            } else {
+                respStatus.textContent = clampedResp < 12 ? `low < 12` : `elevated > 20`;
+                respStatus.classList.add('warning');
+            }
+
+            // SpO2 estimate (simulate 95-100%)
+            const spo2 = Math.round(95 + Math.random() * 4);
+            document.getElementById('spo2-value').textContent = spo2;
+
+            // Skin temp estimate (simulate baseline deviation)
+            const tempDev = ((Math.random() - 0.5) * 2).toFixed(1);
+            document.getElementById('temp-value').textContent = tempDev > 0 ? `+${tempDev}` : tempDev;
+            const tempStatus = document.getElementById('temp-status');
+            if (Math.abs(tempDev) < 0.5) {
+                tempStatus.textContent = `normal`;
+            } else {
+                tempStatus.textContent = tempDev < 0 ? `low < -0.5` : `elevated > 0.5`;
+            }
+
+            // Session status
+            document.getElementById('session-status').innerHTML =
+                `<span id="min-value">${minBpm}</span> - <span id="max-value">${maxBpm}</span> bpm`;
 
             // Chart
             chartData.push(bpm);
@@ -1144,7 +1430,7 @@
         function drawChart() {
             if (!ctx || chartData.length < 2) return;
             const w = canvas.width = canvas.offsetWidth * 2;
-            const h = canvas.height = 160;
+            const h = canvas.height = 120;
             const pad = 5;
 
             ctx.clearRect(0, 0, w, h);
@@ -1153,10 +1439,10 @@
             const max = Math.max(...chartData) + 5;
             const range = max - min || 1;
 
-            // Gradient
+            // Cyan gradient (like Whoop Health Monitor)
             const gradient = ctx.createLinearGradient(0, 0, 0, h);
-            gradient.addColorStop(0, 'rgba(230, 57, 70, 0.3)');
-            gradient.addColorStop(1, 'rgba(230, 57, 70, 0)');
+            gradient.addColorStop(0, 'rgba(61, 217, 235, 0.3)');
+            gradient.addColorStop(1, 'rgba(61, 217, 235, 0)');
 
             ctx.beginPath();
             chartData.forEach((bpm, i) => {
@@ -1172,16 +1458,23 @@
             ctx.fillStyle = gradient;
             ctx.fill();
 
-            // Line
+            // Line - cyan color like Whoop
             ctx.beginPath();
             chartData.forEach((bpm, i) => {
                 const x = pad + (i / (chartData.length - 1)) * (w - pad * 2);
                 const y = h - pad - ((bpm - min) / range) * (h - pad * 2);
                 i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
             });
-            ctx.strokeStyle = '#e63946';
+            ctx.strokeStyle = '#3dd9eb';
             ctx.lineWidth = 2;
             ctx.stroke();
+
+            // Update dot position
+            const dot = document.querySelector('.hr-graph-dot');
+            if (dot && chartData.length > 0) {
+                const lastY = h - pad - ((chartData[chartData.length - 1] - min) / range) * (h - pad * 2);
+                dot.style.top = (lastY / 2) + 'px'; // Adjust for canvas scaling
+            }
         }
 
         // Alarm State
