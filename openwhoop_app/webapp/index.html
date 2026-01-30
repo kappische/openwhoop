@@ -12,12 +12,13 @@
             color: white;
             min-height: 100vh;
             padding: 16px;
+            padding-bottom: 80px;
         }
         .header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 24px;
+            margin-bottom: 20px;
         }
         .title { font-size: 20px; font-weight: 600; }
         .status {
@@ -34,7 +35,8 @@
             background: #666;
         }
         .status-dot.connected { background: #22c55e; }
-        .connect-btn {
+
+        .btn {
             background: #222;
             border: 1px solid #333;
             color: white;
@@ -43,66 +45,119 @@
             font-size: 14px;
             cursor: pointer;
             width: 100%;
-            margin-bottom: 24px;
         }
-        .connect-btn:disabled { opacity: 0.5; }
+        .btn:disabled { opacity: 0.5; }
+        .btn.primary { background: #ef4444; border-color: #ef4444; }
         .hidden { display: none; }
 
+        /* Tabs */
+        .tabs {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+        .tab {
+            flex: 1;
+            padding: 10px;
+            background: #151520;
+            border: none;
+            border-radius: 8px;
+            color: #666;
+            font-size: 13px;
+            cursor: pointer;
+        }
+        .tab.active {
+            background: #222;
+            color: white;
+        }
+
+        /* Cards */
+        .card {
+            background: rgba(255,255,255,0.03);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 16px;
+        }
+        .card-title {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            margin-bottom: 8px;
+        }
+
         /* Heart rate display */
-        .hr-display {
+        .hr-row {
+            display: flex;
+            gap: 16px;
+        }
+        .hr-card {
+            flex: 1;
             text-align: center;
-            margin-bottom: 24px;
         }
         .hr-value {
-            font-size: 72px;
-            font-weight: 200;
+            font-size: 48px;
+            font-weight: 300;
             line-height: 1;
-            color: #ef4444;
         }
+        .hr-value.current { color: #ef4444; }
+        .hr-value.resting { color: #3b82f6; }
         .hr-label {
-            font-size: 14px;
+            font-size: 12px;
             color: #666;
             margin-top: 4px;
         }
-        .hr-zone {
-            font-size: 12px;
-            color: #888;
-            margin-top: 8px;
-            padding: 4px 12px;
-            background: rgba(255,255,255,0.05);
-            border-radius: 12px;
-            display: inline-block;
-        }
 
-        /* Stats row */
-        .stats {
+        /* Stats */
+        .stats-row {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 24px;
-            padding: 16px;
-            background: rgba(255,255,255,0.03);
-            border-radius: 12px;
         }
-        .stat { text-align: center; flex: 1; }
-        .stat-value { font-size: 24px; font-weight: 500; }
-        .stat-label { font-size: 11px; color: #666; margin-top: 2px; }
-        .stat.min .stat-value { color: #3b82f6; }
-        .stat.avg .stat-value { color: #22c55e; }
-        .stat.max .stat-value { color: #ef4444; }
+        .stat { text-align: center; }
+        .stat-value { font-size: 20px; font-weight: 500; }
+        .stat-label { font-size: 11px; color: #666; }
 
         /* Chart */
-        .chart-container {
-            background: rgba(255,255,255,0.03);
-            border-radius: 12px;
-            padding: 16px;
+        canvas { width: 100%; height: 100px; }
+
+        /* Alarm */
+        .alarm-time {
+            display: flex;
+            gap: 8px;
             margin-bottom: 16px;
         }
-        canvas { width: 100%; height: 120px; }
+        .time-input {
+            flex: 1;
+            background: #151520;
+            border: 1px solid #333;
+            border-radius: 8px;
+            padding: 12px;
+            color: white;
+            font-size: 18px;
+            text-align: center;
+        }
+        .alarm-status {
+            text-align: center;
+            padding: 12px;
+            background: #151520;
+            border-radius: 8px;
+            margin-bottom: 16px;
+            font-size: 14px;
+            color: #666;
+        }
+        .alarm-status.active {
+            background: rgba(34, 197, 94, 0.1);
+            color: #22c55e;
+        }
+        .alarm-buttons {
+            display: flex;
+            gap: 8px;
+        }
+        .alarm-buttons .btn { flex: 1; }
 
-        /* Info text */
-        .info { font-size: 11px; color: #444; text-align: center; }
+        /* Info */
+        .info { font-size: 11px; color: #444; text-align: center; margin-top: 16px; }
 
-        /* Error/warning messages */
         .msg {
             padding: 12px;
             border-radius: 8px;
@@ -116,7 +171,7 @@
 <body>
     <div class="header">
         <div class="title">OpenWhoop</div>
-        <div class="status" id="status">
+        <div class="status">
             <span class="status-dot" id="status-dot"></span>
             <span id="status-text">Not connected</span>
         </div>
@@ -125,40 +180,92 @@
     <div id="error-box" class="msg error hidden"></div>
     <div id="browser-warning" class="msg warning hidden">
         Web Bluetooth not supported.<br>
-        <strong>iPhone:</strong> Use "Bluefy" app &nbsp;|&nbsp; <strong>Android/PC:</strong> Use Chrome
+        <strong>iPhone:</strong> Use "Bluefy" app
     </div>
 
-    <button class="connect-btn" id="connect-btn" onclick="connectToWhoop()">
+    <button class="btn" id="connect-btn" onclick="connectToWhoop()">
         Connect to Whoop
     </button>
 
-    <div id="data-section" class="hidden">
-        <div class="hr-display">
-            <div class="hr-value" id="bpm-value">--</div>
-            <div class="hr-label">BPM</div>
-            <div class="hr-zone" id="zone-label">--</div>
+    <div id="main-content" class="hidden">
+        <div class="tabs">
+            <button class="tab active" onclick="showTab('heart')">Heart Rate</button>
+            <button class="tab" onclick="showTab('alarm')">Alarm</button>
         </div>
 
-        <div class="stats">
-            <div class="stat min">
-                <div class="stat-value" id="min-bpm">--</div>
-                <div class="stat-label">MIN</div>
+        <!-- Heart Rate Tab -->
+        <div id="tab-heart">
+            <div class="card">
+                <div class="hr-row">
+                    <div class="hr-card">
+                        <div class="hr-value current" id="bpm-value">--</div>
+                        <div class="hr-label">Current BPM</div>
+                    </div>
+                    <div class="hr-card">
+                        <div class="hr-value resting" id="rhr-value">--</div>
+                        <div class="hr-label">Resting HR</div>
+                    </div>
+                </div>
             </div>
-            <div class="stat avg">
-                <div class="stat-value" id="avg-bpm">--</div>
-                <div class="stat-label">AVG</div>
+
+            <div class="card">
+                <div class="card-title">Session Stats</div>
+                <div class="stats-row">
+                    <div class="stat">
+                        <div class="stat-value" id="min-bpm" style="color:#3b82f6">--</div>
+                        <div class="stat-label">MIN</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="avg-bpm" style="color:#22c55e">--</div>
+                        <div class="stat-label">AVG</div>
+                    </div>
+                    <div class="stat">
+                        <div class="stat-value" id="max-bpm" style="color:#ef4444">--</div>
+                        <div class="stat-label">MAX</div>
+                    </div>
+                </div>
             </div>
-            <div class="stat max">
-                <div class="stat-value" id="max-bpm">--</div>
-                <div class="stat-label">MAX</div>
+
+            <div class="card">
+                <div class="card-title">History</div>
+                <canvas id="chart"></canvas>
             </div>
+
+            <div class="info" id="reading-count">0 readings</div>
         </div>
 
-        <div class="chart-container">
-            <canvas id="chart"></canvas>
-        </div>
+        <!-- Alarm Tab -->
+        <div id="tab-alarm" class="hidden">
+            <div class="card">
+                <div class="card-title">Set Vibration Alarm</div>
+                <div class="alarm-time">
+                    <input type="time" class="time-input" id="alarm-time" value="07:00">
+                </div>
+                <div class="alarm-status" id="alarm-status">No alarm set</div>
+                <div class="alarm-buttons">
+                    <button class="btn primary" onclick="setAlarm()">Set Alarm</button>
+                    <button class="btn" onclick="disableAlarm()">Disable</button>
+                </div>
+            </div>
 
-        <div class="info" id="reading-count">0 readings</div>
+            <div class="card">
+                <div class="card-title">Quick Alarms</div>
+                <div class="alarm-buttons" style="margin-bottom: 8px;">
+                    <button class="btn" onclick="setQuickAlarm(5)">5 min</button>
+                    <button class="btn" onclick="setQuickAlarm(10)">10 min</button>
+                    <button class="btn" onclick="setQuickAlarm(15)">15 min</button>
+                </div>
+                <div class="alarm-buttons">
+                    <button class="btn" onclick="setQuickAlarm(30)">30 min</button>
+                    <button class="btn" onclick="setQuickAlarm(60)">1 hour</button>
+                </div>
+            </div>
+
+            <div class="card">
+                <div class="card-title">Test</div>
+                <button class="btn" onclick="testAlarm()">Vibrate Now</button>
+            </div>
+        </div>
     </div>
 
     <script>
@@ -171,7 +278,9 @@
         let device = null, cmdChar = null;
         let readings = [], chartData = [];
         let minBpm = 999, maxBpm = 0, totalBpm = 0;
+        let lowestReadings = []; // For RHR calculation
         let canvas, ctx;
+        let currentAlarm = null;
 
         if (!navigator.bluetooth) {
             document.getElementById('browser-warning').classList.remove('hidden');
@@ -181,7 +290,16 @@
         document.addEventListener('DOMContentLoaded', () => {
             canvas = document.getElementById('chart');
             ctx = canvas.getContext('2d');
+            loadAlarmFromStorage();
         });
+
+        // Tab switching
+        function showTab(tab) {
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelector(`.tab:nth-child(${tab === 'heart' ? 1 : 2})`).classList.add('active');
+            document.getElementById('tab-heart').classList.toggle('hidden', tab !== 'heart');
+            document.getElementById('tab-alarm').classList.toggle('hidden', tab !== 'alarm');
+        }
 
         // CRC functions
         function crc8(data) {
@@ -229,7 +347,14 @@
         };
         const enterHighFreqSync = () => createPacket(35, 0, 96, []);
         const enableRealtimeHr = () => createPacket(35, 0, 3, [0x01]);
-        const historyStart = () => createPacket(35, 0, 22, [0x00]);
+
+        // Alarm commands
+        function setAlarmTime(unixTimestamp) {
+            const t = unixTimestamp;
+            return createPacket(35, 0, 66, [0x01, t & 0xFF, (t >> 8) & 0xFF, (t >> 16) & 0xFF, (t >> 24) & 0xFF, 0, 0, 0, 0]);
+        }
+        const runAlarmNow = () => createPacket(35, 0, 68, [0x00]);
+        const disableAlarmCmd = () => createPacket(35, 0, 69, [0x00]);
 
         function setStatus(text, connected = false) {
             document.getElementById('status-text').textContent = text;
@@ -243,21 +368,22 @@
             setTimeout(() => box.classList.add('hidden'), 5000);
         }
 
-        function getZone(bpm) {
-            if (bpm < 60) return 'Resting';
-            if (bpm < 100) return 'Normal';
-            if (bpm < 140) return 'Elevated';
-            return 'High';
-        }
-
         function updateDisplay(bpm) {
             document.getElementById('bpm-value').textContent = bpm;
-            document.getElementById('zone-label').textContent = getZone(bpm);
 
             readings.push({ bpm, time: Date.now() });
             totalBpm += bpm;
             if (bpm < minBpm) minBpm = bpm;
             if (bpm > maxBpm) maxBpm = bpm;
+
+            // Calculate RHR (lowest 5% of readings, minimum 5 readings)
+            lowestReadings.push(bpm);
+            lowestReadings.sort((a, b) => a - b);
+            if (lowestReadings.length > 100) lowestReadings = lowestReadings.slice(0, 100);
+
+            const rhrCount = Math.max(5, Math.floor(lowestReadings.length * 0.05));
+            const rhr = Math.round(lowestReadings.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
+            document.getElementById('rhr-value').textContent = rhr;
 
             document.getElementById('min-bpm').textContent = minBpm;
             document.getElementById('max-bpm').textContent = maxBpm;
@@ -267,12 +393,15 @@
             chartData.push(bpm);
             if (chartData.length > 60) chartData.shift();
             drawChart();
+
+            // Save to localStorage
+            saveDataToStorage();
         }
 
         function drawChart() {
             if (!ctx || chartData.length < 2) return;
             const w = canvas.width = canvas.offsetWidth * 2;
-            const h = canvas.height = 240;
+            const h = canvas.height = 200;
             const pad = 10;
 
             ctx.clearRect(0, 0, w, h);
@@ -351,7 +480,7 @@
                 await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
 
                 setStatus('Connected', true);
-                document.getElementById('data-section').classList.remove('hidden');
+                document.getElementById('main-content').classList.remove('hidden');
                 document.getElementById('connect-btn').textContent = 'Disconnect';
                 document.getElementById('connect-btn').onclick = disconnect;
                 document.getElementById('connect-btn').disabled = false;
@@ -379,6 +508,145 @@
             document.getElementById('connect-btn').textContent = 'Connect to Whoop';
             document.getElementById('connect-btn').onclick = connectToWhoop;
             document.getElementById('connect-btn').disabled = false;
+        }
+
+        // Alarm functions
+        async function setAlarm() {
+            if (!cmdChar) {
+                showError('Not connected');
+                return;
+            }
+
+            const timeInput = document.getElementById('alarm-time').value;
+            const [hours, minutes] = timeInput.split(':').map(Number);
+
+            const now = new Date();
+            const alarmDate = new Date(now);
+            alarmDate.setHours(hours, minutes, 0, 0);
+
+            // If time is in the past, set for tomorrow
+            if (alarmDate <= now) {
+                alarmDate.setDate(alarmDate.getDate() + 1);
+            }
+
+            const unixTime = Math.floor(alarmDate.getTime() / 1000);
+
+            try {
+                await cmdChar.writeValueWithoutResponse(setAlarmTime(unixTime));
+                currentAlarm = alarmDate;
+                updateAlarmStatus();
+                saveAlarmToStorage();
+            } catch (e) {
+                showError('Failed to set alarm: ' + e.message);
+            }
+        }
+
+        async function setQuickAlarm(minutes) {
+            if (!cmdChar) {
+                showError('Not connected');
+                return;
+            }
+
+            const alarmDate = new Date(Date.now() + minutes * 60 * 1000);
+            const unixTime = Math.floor(alarmDate.getTime() / 1000);
+
+            try {
+                await cmdChar.writeValueWithoutResponse(setAlarmTime(unixTime));
+                currentAlarm = alarmDate;
+                updateAlarmStatus();
+                saveAlarmToStorage();
+            } catch (e) {
+                showError('Failed to set alarm: ' + e.message);
+            }
+        }
+
+        async function testAlarm() {
+            if (!cmdChar) {
+                showError('Not connected');
+                return;
+            }
+
+            try {
+                await cmdChar.writeValueWithoutResponse(runAlarmNow());
+            } catch (e) {
+                showError('Failed to trigger alarm: ' + e.message);
+            }
+        }
+
+        async function disableAlarm() {
+            if (!cmdChar) {
+                showError('Not connected');
+                return;
+            }
+
+            try {
+                await cmdChar.writeValueWithoutResponse(disableAlarmCmd());
+                currentAlarm = null;
+                updateAlarmStatus();
+                localStorage.removeItem('whoopAlarm');
+            } catch (e) {
+                showError('Failed to disable alarm: ' + e.message);
+            }
+        }
+
+        function updateAlarmStatus() {
+            const statusEl = document.getElementById('alarm-status');
+            if (currentAlarm) {
+                const timeStr = currentAlarm.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                const dateStr = currentAlarm.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
+                statusEl.textContent = `Alarm set for ${timeStr} on ${dateStr}`;
+                statusEl.classList.add('active');
+            } else {
+                statusEl.textContent = 'No alarm set';
+                statusEl.classList.remove('active');
+            }
+        }
+
+        // Storage functions
+        function saveAlarmToStorage() {
+            if (currentAlarm) {
+                localStorage.setItem('whoopAlarm', currentAlarm.toISOString());
+            }
+        }
+
+        function loadAlarmFromStorage() {
+            const saved = localStorage.getItem('whoopAlarm');
+            if (saved) {
+                const date = new Date(saved);
+                if (date > new Date()) {
+                    currentAlarm = date;
+                    updateAlarmStatus();
+                } else {
+                    localStorage.removeItem('whoopAlarm');
+                }
+            }
+        }
+
+        function saveDataToStorage() {
+            const data = {
+                readings: readings.slice(-1000), // Keep last 1000
+                lowestReadings: lowestReadings,
+                minBpm, maxBpm, totalBpm,
+                lastUpdate: Date.now()
+            };
+            localStorage.setItem('whoopData', JSON.stringify(data));
+        }
+
+        function loadDataFromStorage() {
+            const saved = localStorage.getItem('whoopData');
+            if (saved) {
+                try {
+                    const data = JSON.parse(saved);
+                    // Only load if less than 24 hours old
+                    if (Date.now() - data.lastUpdate < 24 * 60 * 60 * 1000) {
+                        readings = data.readings || [];
+                        lowestReadings = data.lowestReadings || [];
+                        minBpm = data.minBpm || 999;
+                        maxBpm = data.maxBpm || 0;
+                        totalBpm = data.totalBpm || 0;
+                    }
+                } catch (e) {}
+            }
         }
     </script>
 </body>
