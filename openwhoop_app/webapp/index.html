@@ -3,305 +3,628 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
-    <title>OpenWhoop</title>
+    <title>WHOOP</title>
     <style>
         * { margin: 0; padding: 0; box-sizing: border-box; }
-        body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0a0a0f;
-            color: white;
-            min-height: 100vh;
-            padding: 16px;
-            padding-bottom: 80px;
+
+        :root {
+            --green: #00d1a7;
+            --yellow: #f5c842;
+            --red: #e63946;
+            --bg: #000;
+            --card: #111;
+            --card-light: #1a1a1a;
+            --text: #fff;
+            --text-secondary: #888;
+            --border: #222;
         }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', sans-serif;
+            background: var(--bg);
+            color: var(--text);
+            min-height: 100vh;
+            padding-bottom: 70px;
+        }
+
+        /* Header */
         .header {
+            padding: 16px 20px;
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 20px;
+            border-bottom: 1px solid var(--border);
         }
-        .title { font-size: 20px; font-weight: 600; }
-        .status {
-            font-size: 12px;
-            color: #666;
+        .header-title {
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 2px;
+        }
+        .header-status {
             display: flex;
             align-items: center;
             gap: 6px;
+            font-size: 11px;
+            color: var(--text-secondary);
         }
         .status-dot {
-            width: 8px;
-            height: 8px;
+            width: 6px;
+            height: 6px;
             border-radius: 50%;
-            background: #666;
+            background: var(--red);
         }
-        .status-dot.connected { background: #22c55e; }
+        .status-dot.connected { background: var(--green); }
 
-        .btn {
-            background: #222;
-            border: 1px solid #333;
-            color: white;
-            padding: 10px 20px;
-            border-radius: 8px;
-            font-size: 14px;
-            cursor: pointer;
-            width: 100%;
-        }
-        .btn:disabled { opacity: 0.5; }
-        .btn.primary { background: #ef4444; border-color: #ef4444; }
-        .hidden { display: none; }
-
-        /* Tabs */
-        .tabs {
+        /* Connect Screen */
+        .connect-screen {
             display: flex;
-            gap: 8px;
-            margin-bottom: 20px;
-        }
-        .tab {
-            flex: 1;
-            padding: 10px;
-            background: #151520;
-            border: none;
-            border-radius: 8px;
-            color: #666;
-            font-size: 13px;
-            cursor: pointer;
-        }
-        .tab.active {
-            background: #222;
-            color: white;
-        }
-
-        /* Cards */
-        .card {
-            background: rgba(255,255,255,0.03);
-            border-radius: 12px;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 70vh;
             padding: 20px;
-            margin-bottom: 16px;
         }
-        .card-title {
-            font-size: 12px;
-            color: #666;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+        .connect-logo {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: 4px;
             margin-bottom: 8px;
         }
-
-        /* Heart rate display */
-        .hr-row {
-            display: flex;
-            gap: 16px;
+        .connect-subtitle {
+            color: var(--text-secondary);
+            font-size: 13px;
+            margin-bottom: 40px;
         }
-        .hr-card {
-            flex: 1;
+        .connect-btn {
+            background: var(--green);
+            color: #000;
+            border: none;
+            padding: 14px 40px;
+            border-radius: 25px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .connect-btn:disabled {
+            opacity: 0.5;
+        }
+
+        /* Main Content */
+        .main { display: none; }
+        .main.active { display: block; }
+
+        /* Overview Cards */
+        .overview {
+            padding: 20px;
+        }
+        .date-header {
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-bottom: 16px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        /* Score Cards Grid */
+        .score-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 12px;
+            margin-bottom: 20px;
+        }
+        .score-card {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 20px;
             text-align: center;
         }
-        .hr-value {
-            font-size: 48px;
-            font-weight: 300;
-            line-height: 1;
+        .score-card.full { grid-column: 1 / -1; }
+
+        .score-ring {
+            width: 100px;
+            height: 100px;
+            margin: 0 auto 12px;
+            position: relative;
         }
-        .hr-value.current { color: #ef4444; }
-        .hr-value.resting { color: #3b82f6; }
-        .hr-label {
-            font-size: 12px;
-            color: #666;
-            margin-top: 4px;
+        .score-ring svg {
+            transform: rotate(-90deg);
+            width: 100%;
+            height: 100%;
+        }
+        .score-ring-bg {
+            fill: none;
+            stroke: var(--card-light);
+            stroke-width: 8;
+        }
+        .score-ring-fill {
+            fill: none;
+            stroke-width: 8;
+            stroke-linecap: round;
+            transition: stroke-dashoffset 0.5s;
+        }
+        .score-value {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            font-size: 28px;
+            font-weight: 600;
+        }
+        .score-label {
+            font-size: 11px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 1px;
         }
 
-        /* Stats */
-        .stats-row {
+        /* Metric Rows */
+        .metrics-section {
+            background: var(--card);
+            border-radius: 16px;
+            overflow: hidden;
+            margin-bottom: 12px;
+        }
+        .metrics-header {
+            padding: 16px 20px;
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            border-bottom: 1px solid var(--border);
+        }
+        .metric-row {
             display: flex;
             justify-content: space-between;
+            align-items: center;
+            padding: 16px 20px;
+            border-bottom: 1px solid var(--border);
         }
-        .stat { text-align: center; }
-        .stat-value { font-size: 20px; font-weight: 500; }
-        .stat-label { font-size: 11px; color: #666; }
+        .metric-row:last-child { border-bottom: none; }
+        .metric-label {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .metric-value {
+            font-size: 16px;
+            font-weight: 600;
+        }
+        .metric-unit {
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-left: 4px;
+        }
 
-        /* Chart */
-        canvas { width: 100%; height: 100px; }
-
-        /* Alarm */
-        .alarm-time {
+        /* Live HR Section */
+        .live-hr {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 12px;
+        }
+        .live-hr-header {
             display: flex;
-            gap: 8px;
+            justify-content: space-between;
+            align-items: center;
             margin-bottom: 16px;
         }
-        .time-input {
+        .live-hr-title {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .live-indicator {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 11px;
+            color: var(--green);
+        }
+        .live-dot {
+            width: 6px;
+            height: 6px;
+            background: var(--green);
+            border-radius: 50%;
+            animation: pulse 1.5s infinite;
+        }
+        @keyframes pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.4; }
+        }
+        .live-hr-value {
+            font-size: 64px;
+            font-weight: 300;
+            text-align: center;
+            color: var(--red);
+        }
+        .live-hr-label {
+            text-align: center;
+            font-size: 12px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        .hr-chart {
+            margin-top: 20px;
+            height: 80px;
+        }
+        .hr-chart canvas {
+            width: 100%;
+            height: 100%;
+        }
+
+        /* Bottom Nav */
+        .bottom-nav {
+            position: fixed;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: var(--card);
+            border-top: 1px solid var(--border);
+            display: flex;
+            padding: 8px 0;
+            padding-bottom: max(8px, env(safe-area-inset-bottom));
+        }
+        .nav-item {
             flex: 1;
-            background: #151520;
-            border: 1px solid #333;
-            border-radius: 8px;
-            padding: 12px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 4px;
+            padding: 8px;
+            background: none;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 10px;
+            cursor: pointer;
+        }
+        .nav-item.active { color: var(--text); }
+        .nav-icon {
+            font-size: 20px;
+        }
+
+        /* Tab Content */
+        .tab-content { display: none; padding: 20px; }
+        .tab-content.active { display: block; }
+
+        /* Alarm Section */
+        .alarm-card {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 20px;
+            margin-bottom: 12px;
+        }
+        .alarm-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        .alarm-title {
+            font-size: 13px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+        .alarm-toggle {
+            width: 50px;
+            height: 28px;
+            background: var(--border);
+            border-radius: 14px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .alarm-toggle.active { background: var(--green); }
+        .alarm-toggle::after {
+            content: '';
+            position: absolute;
+            width: 24px;
+            height: 24px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.2s;
+        }
+        .alarm-toggle.active::after {
+            transform: translateX(22px);
+        }
+        .alarm-time-display {
+            font-size: 48px;
+            font-weight: 300;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .alarm-time-input {
+            width: 100%;
+            background: var(--card-light);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 16px;
             color: white;
             font-size: 18px;
             text-align: center;
-        }
-        .alarm-status {
-            text-align: center;
-            padding: 12px;
-            background: #151520;
-            border-radius: 8px;
             margin-bottom: 16px;
-            font-size: 14px;
-            color: #666;
         }
-        .alarm-status.active {
-            background: rgba(34, 197, 94, 0.1);
-            color: #22c55e;
-        }
-        .alarm-buttons {
-            display: flex;
+        .alarm-presets {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
             gap: 8px;
         }
-        .alarm-buttons .btn { flex: 1; }
-
-        /* Info */
-        .info { font-size: 11px; color: #444; text-align: center; margin-top: 16px; }
-
-        .msg {
-            padding: 12px;
+        .preset-btn {
+            background: var(--card-light);
+            border: 1px solid var(--border);
             border-radius: 8px;
-            margin-bottom: 16px;
+            padding: 12px;
+            color: white;
             font-size: 13px;
+            cursor: pointer;
         }
-        .msg.error { background: rgba(239,68,68,0.1); border: 1px solid #ef4444; }
-        .msg.warning { background: rgba(59,130,246,0.1); border: 1px solid #3b82f6; }
+        .preset-btn:active {
+            background: var(--border);
+        }
+
+        /* Hidden */
+        .hidden { display: none !important; }
+
+        /* Error */
+        .error-toast {
+            position: fixed;
+            top: 20px;
+            left: 20px;
+            right: 20px;
+            background: var(--red);
+            color: white;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 13px;
+            z-index: 1000;
+            display: none;
+        }
     </style>
 </head>
 <body>
+    <div class="error-toast" id="error-toast"></div>
+
     <div class="header">
-        <div class="title">OpenWhoop</div>
-        <div class="status">
+        <div class="header-title">WHOOP</div>
+        <div class="header-status">
             <span class="status-dot" id="status-dot"></span>
-            <span id="status-text">Not connected</span>
+            <span id="status-text">Disconnected</span>
         </div>
     </div>
 
-    <div id="error-box" class="msg error hidden"></div>
-    <div id="browser-warning" class="msg warning hidden">
-        Web Bluetooth not supported.<br>
-        <strong>iPhone:</strong> Use "Bluefy" app
+    <!-- Connect Screen -->
+    <div class="connect-screen" id="connect-screen">
+        <div class="connect-logo">WHOOP</div>
+        <div class="connect-subtitle">Open Source Heart Monitor</div>
+        <button class="connect-btn" id="connect-btn" onclick="connect()">Connect</button>
     </div>
 
-    <button class="btn" id="connect-btn" onclick="connectToWhoop()">
-        Connect to Whoop
-    </button>
+    <!-- Main App -->
+    <div class="main" id="main-app">
+        <!-- Overview Tab -->
+        <div class="tab-content active" id="tab-overview">
+            <div class="date-header" id="date-header">Today</div>
 
-    <div id="main-content" class="hidden">
-        <div class="tabs">
-            <button class="tab active" onclick="showTab('heart')">Heart Rate</button>
-            <button class="tab" onclick="showTab('alarm')">Alarm</button>
+            <div class="score-grid">
+                <div class="score-card">
+                    <div class="score-ring">
+                        <svg viewBox="0 0 100 100">
+                            <circle class="score-ring-bg" cx="50" cy="50" r="42"/>
+                            <circle class="score-ring-fill" id="recovery-ring" cx="50" cy="50" r="42"
+                                stroke="var(--green)" stroke-dasharray="264" stroke-dashoffset="264"/>
+                        </svg>
+                        <div class="score-value" id="recovery-value">--%</div>
+                    </div>
+                    <div class="score-label">Recovery</div>
+                </div>
+                <div class="score-card">
+                    <div class="score-ring">
+                        <svg viewBox="0 0 100 100">
+                            <circle class="score-ring-bg" cx="50" cy="50" r="42"/>
+                            <circle class="score-ring-fill" id="strain-ring" cx="50" cy="50" r="42"
+                                stroke="var(--yellow)" stroke-dasharray="264" stroke-dashoffset="264"/>
+                        </svg>
+                        <div class="score-value" id="strain-value">--</div>
+                    </div>
+                    <div class="score-label">Strain</div>
+                </div>
+            </div>
+
+            <div class="live-hr">
+                <div class="live-hr-header">
+                    <div class="live-hr-title">Heart Rate</div>
+                    <div class="live-indicator">
+                        <div class="live-dot"></div>
+                        LIVE
+                    </div>
+                </div>
+                <div class="live-hr-value" id="hr-value">--</div>
+                <div class="live-hr-label">BPM</div>
+                <div class="hr-chart">
+                    <canvas id="hr-chart"></canvas>
+                </div>
+            </div>
+
+            <div class="metrics-section">
+                <div class="metrics-header">Health Metrics</div>
+                <div class="metric-row">
+                    <span class="metric-label">Resting HR</span>
+                    <span><span class="metric-value" id="rhr-value">--</span><span class="metric-unit">bpm</span></span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">HRV</span>
+                    <span><span class="metric-value" id="hrv-value">--</span><span class="metric-unit">ms</span></span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Session Min</span>
+                    <span><span class="metric-value" id="min-value">--</span><span class="metric-unit">bpm</span></span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Session Max</span>
+                    <span><span class="metric-value" id="max-value">--</span><span class="metric-unit">bpm</span></span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Session Avg</span>
+                    <span><span class="metric-value" id="avg-value">--</span><span class="metric-unit">bpm</span></span>
+                </div>
+            </div>
         </div>
 
-        <!-- Heart Rate Tab -->
-        <div id="tab-heart">
-            <div class="card">
-                <div class="hr-row">
-                    <div class="hr-card">
-                        <div class="hr-value current" id="bpm-value">--</div>
-                        <div class="hr-label">Current BPM</div>
-                    </div>
-                    <div class="hr-card">
-                        <div class="hr-value resting" id="rhr-value">--</div>
-                        <div class="hr-label">Resting HR</div>
-                    </div>
+        <!-- Strain Tab -->
+        <div class="tab-content" id="tab-strain">
+            <div class="score-card full" style="margin-bottom: 20px;">
+                <div class="score-ring" style="width: 140px; height: 140px;">
+                    <svg viewBox="0 0 100 100">
+                        <circle class="score-ring-bg" cx="50" cy="50" r="42"/>
+                        <circle class="score-ring-fill" id="strain-ring-big" cx="50" cy="50" r="42"
+                            stroke="var(--yellow)" stroke-dasharray="264" stroke-dashoffset="264"/>
+                    </svg>
+                    <div class="score-value" id="strain-value-big">--</div>
+                </div>
+                <div class="score-label">Day Strain</div>
+            </div>
+            <div class="metrics-section">
+                <div class="metrics-header">Activity</div>
+                <div class="metric-row">
+                    <span class="metric-label">Peak HR</span>
+                    <span><span class="metric-value" id="peak-hr">--</span><span class="metric-unit">bpm</span></span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Time in Zone</span>
+                    <span><span class="metric-value" id="time-zone">--</span><span class="metric-unit">min</span></span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Calories</span>
+                    <span><span class="metric-value" id="calories">--</span><span class="metric-unit">cal</span></span>
                 </div>
             </div>
+        </div>
 
-            <div class="card">
-                <div class="card-title">Session Stats</div>
-                <div class="stats-row">
-                    <div class="stat">
-                        <div class="stat-value" id="min-bpm" style="color:#3b82f6">--</div>
-                        <div class="stat-label">MIN</div>
-                    </div>
-                    <div class="stat">
-                        <div class="stat-value" id="avg-bpm" style="color:#22c55e">--</div>
-                        <div class="stat-label">AVG</div>
-                    </div>
-                    <div class="stat">
-                        <div class="stat-value" id="max-bpm" style="color:#ef4444">--</div>
-                        <div class="stat-label">MAX</div>
-                    </div>
+        <!-- Sleep Tab -->
+        <div class="tab-content" id="tab-sleep">
+            <div class="score-card full" style="margin-bottom: 20px;">
+                <div class="score-ring" style="width: 140px; height: 140px;">
+                    <svg viewBox="0 0 100 100">
+                        <circle class="score-ring-bg" cx="50" cy="50" r="42"/>
+                        <circle class="score-ring-fill" id="sleep-ring" cx="50" cy="50" r="42"
+                            stroke="var(--green)" stroke-dasharray="264" stroke-dashoffset="264"/>
+                    </svg>
+                    <div class="score-value" id="sleep-value">--%</div>
+                </div>
+                <div class="score-label">Sleep Performance</div>
+            </div>
+            <div class="metrics-section">
+                <div class="metrics-header">Last Night</div>
+                <div class="metric-row">
+                    <span class="metric-label">Time Asleep</span>
+                    <span><span class="metric-value" id="sleep-duration">--</span></span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Sleep Needed</span>
+                    <span><span class="metric-value" id="sleep-needed">--</span></span>
+                </div>
+                <div class="metric-row">
+                    <span class="metric-label">Sleep Debt</span>
+                    <span><span class="metric-value" id="sleep-debt">--</span></span>
                 </div>
             </div>
-
-            <div class="card">
-                <div class="card-title">History</div>
-                <canvas id="chart"></canvas>
-            </div>
-
-            <div class="info" id="reading-count">0 readings</div>
         </div>
 
         <!-- Alarm Tab -->
-        <div id="tab-alarm" class="hidden">
-            <div class="card">
-                <div class="card-title">Set Vibration Alarm</div>
-                <div class="alarm-time">
-                    <input type="time" class="time-input" id="alarm-time" value="07:00">
+        <div class="tab-content" id="tab-alarm">
+            <div class="alarm-card">
+                <div class="alarm-header">
+                    <div class="alarm-title">Haptic Alarm</div>
+                    <div class="alarm-toggle" id="alarm-toggle" onclick="toggleAlarm()"></div>
                 </div>
-                <div class="alarm-status" id="alarm-status">No alarm set</div>
-                <div class="alarm-buttons">
-                    <button class="btn primary" onclick="setAlarm()">Set Alarm</button>
-                    <button class="btn" onclick="disableAlarm()">Disable</button>
+                <input type="time" class="alarm-time-input" id="alarm-time" value="07:00" onchange="updateAlarmDisplay()">
+                <div id="alarm-status" style="text-align: center; color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">
+                    No alarm set
+                </div>
+                <button class="connect-btn" style="width: 100%; margin-bottom: 16px;" onclick="setAlarm()">Set Alarm</button>
+            </div>
+
+            <div class="alarm-card">
+                <div class="alarm-title" style="margin-bottom: 16px;">Quick Timer</div>
+                <div class="alarm-presets">
+                    <button class="preset-btn" onclick="quickAlarm(5)">5 min</button>
+                    <button class="preset-btn" onclick="quickAlarm(10)">10 min</button>
+                    <button class="preset-btn" onclick="quickAlarm(15)">15 min</button>
+                    <button class="preset-btn" onclick="quickAlarm(30)">30 min</button>
+                    <button class="preset-btn" onclick="quickAlarm(45)">45 min</button>
+                    <button class="preset-btn" onclick="quickAlarm(60)">1 hr</button>
                 </div>
             </div>
 
-            <div class="card">
-                <div class="card-title">Quick Alarms</div>
-                <div class="alarm-buttons" style="margin-bottom: 8px;">
-                    <button class="btn" onclick="setQuickAlarm(5)">5 min</button>
-                    <button class="btn" onclick="setQuickAlarm(10)">10 min</button>
-                    <button class="btn" onclick="setQuickAlarm(15)">15 min</button>
-                </div>
-                <div class="alarm-buttons">
-                    <button class="btn" onclick="setQuickAlarm(30)">30 min</button>
-                    <button class="btn" onclick="setQuickAlarm(60)">1 hour</button>
-                </div>
+            <div class="alarm-card">
+                <button class="preset-btn" style="width: 100%;" onclick="testVibrate()">Test Vibration</button>
             </div>
+        </div>
 
-            <div class="card">
-                <div class="card-title">Test</div>
-                <button class="btn" onclick="testAlarm()">Vibrate Now</button>
-            </div>
+        <!-- Bottom Navigation -->
+        <div class="bottom-nav">
+            <button class="nav-item active" onclick="showTab('overview')">
+                <span class="nav-icon">◉</span>
+                Overview
+            </button>
+            <button class="nav-item" onclick="showTab('strain')">
+                <span class="nav-icon">◐</span>
+                Strain
+            </button>
+            <button class="nav-item" onclick="showTab('sleep')">
+                <span class="nav-icon">☽</span>
+                Sleep
+            </button>
+            <button class="nav-item" onclick="showTab('alarm')">
+                <span class="nav-icon">⏰</span>
+                Alarm
+            </button>
         </div>
     </div>
 
     <script>
-        // Whoop BLE UUIDs
+        // BLE Constants
         const WHOOP_SERVICE = '61080001-8d6d-82b8-614a-1c8cb0f8dcc6';
         const CMD_TO_STRAP = '61080002-8d6d-82b8-614a-1c8cb0f8dcc6';
         const CMD_FROM_STRAP = '61080003-8d6d-82b8-614a-1c8cb0f8dcc6';
         const DATA_FROM_STRAP = '61080005-8d6d-82b8-614a-1c8cb0f8dcc6';
 
+        // State
         let device = null, cmdChar = null;
-        let readings = [], chartData = [];
+        let readings = [], chartData = [], rrIntervals = [];
         let minBpm = 999, maxBpm = 0, totalBpm = 0;
-        let lowestReadings = []; // For RHR calculation
+        let lowestReadings = [];
         let canvas, ctx;
-        let currentAlarm = null;
+        let alarmEnabled = false, currentAlarm = null;
+        let sessionStart = Date.now();
 
-        if (!navigator.bluetooth) {
-            document.getElementById('browser-warning').classList.remove('hidden');
-            document.getElementById('connect-btn').disabled = true;
-        }
-
+        // Init
         document.addEventListener('DOMContentLoaded', () => {
-            canvas = document.getElementById('chart');
+            canvas = document.getElementById('hr-chart');
             ctx = canvas.getContext('2d');
-            loadAlarmFromStorage();
+            updateDateHeader();
+            loadFromStorage();
         });
 
-        // Tab switching
-        function showTab(tab) {
-            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
-            document.querySelector(`.tab:nth-child(${tab === 'heart' ? 1 : 2})`).classList.add('active');
-            document.getElementById('tab-heart').classList.toggle('hidden', tab !== 'heart');
-            document.getElementById('tab-alarm').classList.toggle('hidden', tab !== 'alarm');
+        function updateDateHeader() {
+            const now = new Date();
+            const options = { weekday: 'long', month: 'long', day: 'numeric' };
+            document.getElementById('date-header').textContent = now.toLocaleDateString('en-US', options).toUpperCase();
         }
 
-        // CRC functions
+        // Tab Navigation
+        function showTab(tab) {
+            document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+            document.getElementById('tab-' + tab).classList.add('active');
+            event.target.closest('.nav-item').classList.add('active');
+        }
+
+        // CRC Functions
         function crc8(data) {
             let crc = 0;
             for (const b of data) {
@@ -347,115 +670,20 @@
         };
         const enterHighFreqSync = () => createPacket(35, 0, 96, []);
         const enableRealtimeHr = () => createPacket(35, 0, 3, [0x01]);
-
-        // Alarm commands
-        function setAlarmTime(unixTimestamp) {
-            const t = unixTimestamp;
-            return createPacket(35, 0, 66, [0x01, t & 0xFF, (t >> 8) & 0xFF, (t >> 16) & 0xFF, (t >> 24) & 0xFF, 0, 0, 0, 0]);
-        }
+        const setAlarmTime = (t) => createPacket(35, 0, 66, [0x01, t & 0xFF, (t >> 8) & 0xFF, (t >> 16) & 0xFF, (t >> 24) & 0xFF, 0, 0, 0, 0]);
         const runAlarmNow = () => createPacket(35, 0, 68, [0x00]);
         const disableAlarmCmd = () => createPacket(35, 0, 69, [0x00]);
 
-        function setStatus(text, connected = false) {
-            document.getElementById('status-text').textContent = text;
-            document.getElementById('status-dot').classList.toggle('connected', connected);
-        }
-
-        function showError(msg) {
-            const box = document.getElementById('error-box');
-            box.textContent = msg;
-            box.classList.remove('hidden');
-            setTimeout(() => box.classList.add('hidden'), 5000);
-        }
-
-        function updateDisplay(bpm) {
-            document.getElementById('bpm-value').textContent = bpm;
-
-            readings.push({ bpm, time: Date.now() });
-            totalBpm += bpm;
-            if (bpm < minBpm) minBpm = bpm;
-            if (bpm > maxBpm) maxBpm = bpm;
-
-            // Calculate RHR (lowest 5% of readings, minimum 5 readings)
-            lowestReadings.push(bpm);
-            lowestReadings.sort((a, b) => a - b);
-            if (lowestReadings.length > 100) lowestReadings = lowestReadings.slice(0, 100);
-
-            const rhrCount = Math.max(5, Math.floor(lowestReadings.length * 0.05));
-            const rhr = Math.round(lowestReadings.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
-            document.getElementById('rhr-value').textContent = rhr;
-
-            document.getElementById('min-bpm').textContent = minBpm;
-            document.getElementById('max-bpm').textContent = maxBpm;
-            document.getElementById('avg-bpm').textContent = Math.round(totalBpm / readings.length);
-            document.getElementById('reading-count').textContent = readings.length + ' readings';
-
-            chartData.push(bpm);
-            if (chartData.length > 60) chartData.shift();
-            drawChart();
-
-            // Save to localStorage
-            saveDataToStorage();
-        }
-
-        function drawChart() {
-            if (!ctx || chartData.length < 2) return;
-            const w = canvas.width = canvas.offsetWidth * 2;
-            const h = canvas.height = 200;
-            const pad = 10;
-
-            ctx.clearRect(0, 0, w, h);
-
-            const min = Math.min(...chartData) - 5;
-            const max = Math.max(...chartData) + 5;
-            const range = max - min || 1;
-
-            ctx.beginPath();
-            ctx.strokeStyle = '#ef4444';
-            ctx.lineWidth = 2;
-
-            chartData.forEach((bpm, i) => {
-                const x = pad + (i / (chartData.length - 1)) * (w - pad * 2);
-                const y = h - pad - ((bpm - min) / range) * (h - pad * 2);
-                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
-            });
-            ctx.stroke();
-
-            ctx.lineTo(w - pad, h - pad);
-            ctx.lineTo(pad, h - pad);
-            ctx.closePath();
-            ctx.fillStyle = 'rgba(239, 68, 68, 0.1)';
-            ctx.fill();
-        }
-
-        function handleNotification(event) {
-            const data = new Uint8Array(event.target.value.buffer);
-            const packet = parsePacket(data);
-            if (!packet) return;
-
-            // Historical data (type 47): BPM at offset 14
-            if (packet.type === 47 && packet.data.length >= 15) {
-                const bpm = packet.data[14];
-                if (bpm > 0 && bpm < 250) updateDisplay(bpm);
-            }
-            // Realtime data (type 40): BPM at offset 5
-            else if (packet.type === 40 && packet.data.length >= 6) {
-                const bpm = packet.data[5];
-                if (bpm > 0 && bpm < 250) updateDisplay(bpm);
-            }
-        }
-
-        async function connectToWhoop() {
+        // Connect
+        async function connect() {
             try {
-                setStatus('Scanning...');
                 document.getElementById('connect-btn').disabled = true;
+                document.getElementById('connect-btn').textContent = 'Connecting...';
 
                 device = await navigator.bluetooth.requestDevice({
-                    filters: [{ services: [WHOOP_SERVICE] }],
-                    optionalServices: [WHOOP_SERVICE]
+                    filters: [{ services: [WHOOP_SERVICE] }]
                 });
 
-                setStatus('Connecting...');
                 const server = await device.gatt.connect();
                 const service = await server.getPrimaryService(WHOOP_SERVICE);
 
@@ -479,174 +707,244 @@
                 await sleep(100);
                 await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
 
-                setStatus('Connected', true);
-                document.getElementById('main-content').classList.remove('hidden');
-                document.getElementById('connect-btn').textContent = 'Disconnect';
-                document.getElementById('connect-btn').onclick = disconnect;
+                document.getElementById('status-dot').classList.add('connected');
+                document.getElementById('status-text').textContent = 'Connected';
+                document.getElementById('connect-screen').classList.add('hidden');
+                document.getElementById('main-app').classList.add('active');
+
+                device.addEventListener('gattserverdisconnected', onDisconnect);
+
+            } catch (e) {
+                showError('Connection failed: ' + e.message);
                 document.getElementById('connect-btn').disabled = false;
-
-                device.addEventListener('gattserverdisconnected', () => {
-                    setStatus('Disconnected');
-                    resetUI();
-                });
-
-            } catch (error) {
-                showError('Connection failed: ' + error.message);
-                setStatus('Not connected');
-                resetUI();
+                document.getElementById('connect-btn').textContent = 'Connect';
             }
+        }
+
+        function onDisconnect() {
+            document.getElementById('status-dot').classList.remove('connected');
+            document.getElementById('status-text').textContent = 'Disconnected';
         }
 
         const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-        function disconnect() {
-            if (device?.gatt.connected) device.gatt.disconnect();
-            resetUI();
+        function handleNotification(event) {
+            const data = new Uint8Array(event.target.value.buffer);
+            const packet = parsePacket(data);
+            if (!packet) return;
+
+            if (packet.type === 47 && packet.data.length >= 15) {
+                const bpm = packet.data[14];
+                if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data);
+            } else if (packet.type === 40 && packet.data.length >= 6) {
+                const bpm = packet.data[5];
+                if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data);
+            }
         }
 
-        function resetUI() {
-            document.getElementById('connect-btn').textContent = 'Connect to Whoop';
-            document.getElementById('connect-btn').onclick = connectToWhoop;
-            document.getElementById('connect-btn').disabled = false;
-        }
+        function updateMetrics(bpm, rawData) {
+            // Update HR display
+            document.getElementById('hr-value').textContent = bpm;
 
-        // Alarm functions
-        async function setAlarm() {
-            if (!cmdChar) {
-                showError('Not connected');
-                return;
+            readings.push({ bpm, time: Date.now() });
+            totalBpm += bpm;
+            if (bpm < minBpm) minBpm = bpm;
+            if (bpm > maxBpm) maxBpm = bpm;
+
+            // RHR calculation
+            lowestReadings.push(bpm);
+            lowestReadings.sort((a, b) => a - b);
+            if (lowestReadings.length > 100) lowestReadings = lowestReadings.slice(0, 100);
+            const rhrCount = Math.max(5, Math.floor(lowestReadings.length * 0.1));
+            const rhr = Math.round(lowestReadings.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
+
+            // Update displays
+            document.getElementById('rhr-value').textContent = rhr;
+            document.getElementById('min-value').textContent = minBpm;
+            document.getElementById('max-value').textContent = maxBpm;
+            document.getElementById('avg-value').textContent = Math.round(totalBpm / readings.length);
+            document.getElementById('peak-hr').textContent = maxBpm;
+
+            // Calculate Recovery (simplified: based on RHR)
+            const recovery = Math.min(100, Math.max(0, Math.round(150 - rhr)));
+            updateRing('recovery', recovery, recovery > 66 ? 'var(--green)' : recovery > 33 ? 'var(--yellow)' : 'var(--red)');
+            document.getElementById('recovery-value').textContent = recovery + '%';
+
+            // Calculate Strain (simplified: based on session HR range and duration)
+            const sessionMinutes = (Date.now() - sessionStart) / 60000;
+            const hrRange = maxBpm - minBpm;
+            const strain = Math.min(21, (hrRange / 10) + (sessionMinutes / 30));
+            updateRing('strain', (strain / 21) * 100, 'var(--yellow)');
+            document.getElementById('strain-value').textContent = strain.toFixed(1);
+            document.getElementById('strain-value-big').textContent = strain.toFixed(1);
+            updateRing('strain-big', (strain / 21) * 100, 'var(--yellow)');
+
+            // Estimate calories
+            const calories = Math.round(sessionMinutes * (bpm / 60) * 0.5);
+            document.getElementById('calories').textContent = calories;
+            document.getElementById('time-zone').textContent = Math.round(sessionMinutes);
+
+            // HRV placeholder (would need RR intervals)
+            if (readings.length > 10) {
+                const recentHR = readings.slice(-10).map(r => r.bpm);
+                const hrv = Math.round(standardDeviation(recentHR) * 10);
+                document.getElementById('hrv-value').textContent = hrv;
             }
 
-            const timeInput = document.getElementById('alarm-time').value;
-            const [hours, minutes] = timeInput.split(':').map(Number);
+            // Chart
+            chartData.push(bpm);
+            if (chartData.length > 60) chartData.shift();
+            drawChart();
+
+            saveToStorage();
+        }
+
+        function standardDeviation(arr) {
+            const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+            return Math.sqrt(arr.reduce((sq, n) => sq + Math.pow(n - mean, 2), 0) / arr.length);
+        }
+
+        function updateRing(id, percent, color) {
+            const ring = document.getElementById(id + '-ring');
+            if (!ring) return;
+            const circumference = 264;
+            const offset = circumference - (percent / 100) * circumference;
+            ring.style.strokeDashoffset = offset;
+            ring.style.stroke = color;
+        }
+
+        function drawChart() {
+            if (!ctx || chartData.length < 2) return;
+            const w = canvas.width = canvas.offsetWidth * 2;
+            const h = canvas.height = 160;
+            const pad = 5;
+
+            ctx.clearRect(0, 0, w, h);
+
+            const min = Math.min(...chartData) - 5;
+            const max = Math.max(...chartData) + 5;
+            const range = max - min || 1;
+
+            // Gradient
+            const gradient = ctx.createLinearGradient(0, 0, 0, h);
+            gradient.addColorStop(0, 'rgba(230, 57, 70, 0.3)');
+            gradient.addColorStop(1, 'rgba(230, 57, 70, 0)');
+
+            ctx.beginPath();
+            chartData.forEach((bpm, i) => {
+                const x = pad + (i / (chartData.length - 1)) * (w - pad * 2);
+                const y = h - pad - ((bpm - min) / range) * (h - pad * 2);
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            });
+
+            // Fill
+            ctx.lineTo(w - pad, h);
+            ctx.lineTo(pad, h);
+            ctx.closePath();
+            ctx.fillStyle = gradient;
+            ctx.fill();
+
+            // Line
+            ctx.beginPath();
+            chartData.forEach((bpm, i) => {
+                const x = pad + (i / (chartData.length - 1)) * (w - pad * 2);
+                const y = h - pad - ((bpm - min) / range) * (h - pad * 2);
+                i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+            });
+            ctx.strokeStyle = '#e63946';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
+
+        // Alarm Functions
+        function toggleAlarm() {
+            alarmEnabled = !alarmEnabled;
+            document.getElementById('alarm-toggle').classList.toggle('active', alarmEnabled);
+            if (!alarmEnabled && cmdChar) {
+                cmdChar.writeValueWithoutResponse(disableAlarmCmd());
+                document.getElementById('alarm-status').textContent = 'Alarm disabled';
+            }
+        }
+
+        async function setAlarm() {
+            if (!cmdChar) return showError('Not connected');
+
+            const timeVal = document.getElementById('alarm-time').value;
+            const [h, m] = timeVal.split(':').map(Number);
 
             const now = new Date();
-            const alarmDate = new Date(now);
-            alarmDate.setHours(hours, minutes, 0, 0);
-
-            // If time is in the past, set for tomorrow
-            if (alarmDate <= now) {
-                alarmDate.setDate(alarmDate.getDate() + 1);
-            }
-
-            const unixTime = Math.floor(alarmDate.getTime() / 1000);
+            const alarm = new Date(now);
+            alarm.setHours(h, m, 0, 0);
+            if (alarm <= now) alarm.setDate(alarm.getDate() + 1);
 
             try {
-                await cmdChar.writeValueWithoutResponse(setAlarmTime(unixTime));
-                currentAlarm = alarmDate;
-                updateAlarmStatus();
-                saveAlarmToStorage();
+                await cmdChar.writeValueWithoutResponse(setAlarmTime(Math.floor(alarm.getTime() / 1000)));
+                currentAlarm = alarm;
+                alarmEnabled = true;
+                document.getElementById('alarm-toggle').classList.add('active');
+                document.getElementById('alarm-status').textContent =
+                    `Alarm set for ${alarm.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`;
+                saveToStorage();
             } catch (e) {
-                showError('Failed to set alarm: ' + e.message);
+                showError('Failed to set alarm');
             }
         }
 
-        async function setQuickAlarm(minutes) {
-            if (!cmdChar) {
-                showError('Not connected');
-                return;
-            }
+        async function quickAlarm(mins) {
+            if (!cmdChar) return showError('Not connected');
 
-            const alarmDate = new Date(Date.now() + minutes * 60 * 1000);
-            const unixTime = Math.floor(alarmDate.getTime() / 1000);
-
+            const alarm = new Date(Date.now() + mins * 60000);
             try {
-                await cmdChar.writeValueWithoutResponse(setAlarmTime(unixTime));
-                currentAlarm = alarmDate;
-                updateAlarmStatus();
-                saveAlarmToStorage();
+                await cmdChar.writeValueWithoutResponse(setAlarmTime(Math.floor(alarm.getTime() / 1000)));
+                currentAlarm = alarm;
+                alarmEnabled = true;
+                document.getElementById('alarm-toggle').classList.add('active');
+                document.getElementById('alarm-status').textContent = `Timer: ${mins} minutes`;
+                saveToStorage();
             } catch (e) {
-                showError('Failed to set alarm: ' + e.message);
+                showError('Failed to set timer');
             }
         }
 
-        async function testAlarm() {
-            if (!cmdChar) {
-                showError('Not connected');
-                return;
-            }
-
+        async function testVibrate() {
+            if (!cmdChar) return showError('Not connected');
             try {
                 await cmdChar.writeValueWithoutResponse(runAlarmNow());
             } catch (e) {
-                showError('Failed to trigger alarm: ' + e.message);
+                showError('Failed to vibrate');
             }
         }
 
-        async function disableAlarm() {
-            if (!cmdChar) {
-                showError('Not connected');
-                return;
-            }
-
-            try {
-                await cmdChar.writeValueWithoutResponse(disableAlarmCmd());
-                currentAlarm = null;
-                updateAlarmStatus();
-                localStorage.removeItem('whoopAlarm');
-            } catch (e) {
-                showError('Failed to disable alarm: ' + e.message);
-            }
-        }
-
-        function updateAlarmStatus() {
-            const statusEl = document.getElementById('alarm-status');
-            if (currentAlarm) {
-                const timeStr = currentAlarm.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-                const dateStr = currentAlarm.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' });
-                statusEl.textContent = `Alarm set for ${timeStr} on ${dateStr}`;
-                statusEl.classList.add('active');
-            } else {
-                statusEl.textContent = 'No alarm set';
-                statusEl.classList.remove('active');
-            }
-        }
-
-        // Storage functions
-        function saveAlarmToStorage() {
-            if (currentAlarm) {
-                localStorage.setItem('whoopAlarm', currentAlarm.toISOString());
-            }
-        }
-
-        function loadAlarmFromStorage() {
-            const saved = localStorage.getItem('whoopAlarm');
-            if (saved) {
-                const date = new Date(saved);
-                if (date > new Date()) {
-                    currentAlarm = date;
-                    updateAlarmStatus();
-                } else {
-                    localStorage.removeItem('whoopAlarm');
-                }
-            }
-        }
-
-        function saveDataToStorage() {
-            const data = {
-                readings: readings.slice(-1000), // Keep last 1000
-                lowestReadings: lowestReadings,
+        // Storage
+        function saveToStorage() {
+            localStorage.setItem('whoop_data', JSON.stringify({
+                readings: readings.slice(-500),
+                lowestReadings,
                 minBpm, maxBpm, totalBpm,
-                lastUpdate: Date.now()
-            };
-            localStorage.setItem('whoopData', JSON.stringify(data));
+                sessionStart,
+                alarm: currentAlarm?.toISOString()
+            }));
         }
 
-        function loadDataFromStorage() {
-            const saved = localStorage.getItem('whoopData');
-            if (saved) {
-                try {
-                    const data = JSON.parse(saved);
-                    // Only load if less than 24 hours old
-                    if (Date.now() - data.lastUpdate < 24 * 60 * 60 * 1000) {
-                        readings = data.readings || [];
-                        lowestReadings = data.lowestReadings || [];
-                        minBpm = data.minBpm || 999;
-                        maxBpm = data.maxBpm || 0;
-                        totalBpm = data.totalBpm || 0;
+        function loadFromStorage() {
+            try {
+                const data = JSON.parse(localStorage.getItem('whoop_data') || '{}');
+                if (data.alarm) {
+                    const alarm = new Date(data.alarm);
+                    if (alarm > new Date()) {
+                        currentAlarm = alarm;
+                        alarmEnabled = true;
                     }
-                } catch (e) {}
-            }
+                }
+            } catch (e) {}
+        }
+
+        // Error
+        function showError(msg) {
+            const toast = document.getElementById('error-toast');
+            toast.textContent = msg;
+            toast.style.display = 'block';
+            setTimeout(() => toast.style.display = 'none', 3000);
         }
     </script>
 </body>
