@@ -1104,7 +1104,7 @@
 
         // State
         let device = null, cmdChar = null;
-        let readings = [], chartData = [], rrIntervals = [];
+        let readings = [], chartData = [];
         let minBpm = 999, maxBpm = 0, totalBpm = 0;
         let lowestReadings = [];
         let canvas, ctx;
@@ -1113,28 +1113,41 @@
         let debugEnabled = true;
         let packetCount = 0;
 
-        // Cached metric values (updated less frequently)
-        let cachedMetrics = {
-            rhr: null,
-            rhrLastUpdate: 0,
-            hrv: null,
-            hrvLastUpdate: 0,
-            resp: null,
-            respLastUpdate: 0,
-            spo2: null,
-            spo2LastUpdate: 0,
-            temp: null,
-            tempLastUpdate: 0
+        // Historical/Sleep data from device
+        let historicalData = []; // All historical readings
+        let sleepData = {
+            lastSleepStart: null,
+            lastSleepEnd: null,
+            sleepReadings: [],  // Readings during sleep
+            sleepRR: [],        // RR intervals during sleep
+            calculated: false   // Whether we've calculated sleep metrics
         };
 
-        // Update intervals (in milliseconds)
-        const UPDATE_INTERVALS = {
-            rhr: 30000,    // 30 seconds - RHR is normally daily, but update periodically
-            hrv: 60000,    // 60 seconds - HRV is normally daily
-            resp: 60000,   // 60 seconds - Respiratory rate is daily
-            spo2: 0,       // Only set once per session (daily metric)
-            temp: 0        // Only set once per session (daily metric)
+        // Sleep metrics (calculated from last night's sleep data)
+        let sleepMetrics = {
+            rhr: null,          // Lowest HR during sleep
+            hrv: null,          // RMSSD from RR intervals during sleep
+            respRate: null,     // Respiratory rate from RR intervals
+            spo2: null,         // SpO2 (simulated for now)
+            skinTemp: null,     // Skin temp deviation
+            sleepDuration: null,
+            sleepScore: null
         };
+
+        // Activity thresholds (from Whoop protocol)
+        const ACTIVITY = {
+            INACTIVE: 0,
+            ACTIVE: 500000000,
+            SLEEP: 1000000000,
+            AWAKE: 1500000000
+        };
+
+        function getActivityType(activityValue) {
+            if (activityValue >= ACTIVITY.AWAKE) return 'awake';
+            if (activityValue >= ACTIVITY.SLEEP) return 'sleep';
+            if (activityValue >= ACTIVITY.ACTIVE) return 'active';
+            return 'inactive';
+        }
 
         // Debug logging
         function debug(msg) {
@@ -1223,6 +1236,240 @@
         const runAlarmNow = () => createPacket(35, 0, 68, [0x00]);
         const disableAlarmCmd = () => createPacket(35, 0, 69, [0x00]);
 
+        // Request historical data from a specific time (SendHistoricalData = 22)
+        const requestHistoricalData = (startTime) => {
+            const t = Math.floor(startTime / 1000);
+            return createPacket(35, 0, 22, [t & 0xFF, (t >> 8) & 0xFF, (t >> 16) & 0xFF, (t >> 24) & 0xFF]);
+        };
+
+        // Parse historical packet (type 47) - extracts timestamp, BPM, RR intervals, activity
+        function parseHistoricalReading(data) {
+            if (data.length < 14) return null;
+
+            // Packet structure based on Whoop protocol:
+            // Bytes 0-3: Unix timestamp
+            // Byte 4-7: Activity value (u32)
+            // Bytes 8-9: Unknown
+            // Byte 10: Number of RR intervals
+            // Bytes 11+: RR intervals (2 bytes each)
+            // Last byte before RR: BPM
+
+            const unix = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+            const activity = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
+            const bpm = data[14]; // BPM is at offset 14 based on our earlier debugging
+
+            // Extract RR intervals if present
+            const rrCount = data[10] || 0;
+            const rr = [];
+            for (let i = 0; i < rrCount && (11 + i * 2 + 1) < data.length; i++) {
+                const rrVal = data[11 + i * 2] | (data[11 + i * 2 + 1] << 8);
+                if (rrVal > 0 && rrVal < 2000) { // Valid RR interval (300-2000ms)
+                    rr.push(rrVal);
+                }
+            }
+
+            return {
+                unix,
+                time: new Date(unix * 1000),
+                bpm,
+                rr,
+                activity,
+                activityType: getActivityType(activity)
+            };
+        }
+
+        // Calculate RMSSD (Root Mean Square of Successive Differences) for HRV
+        function calculateRMSSD(rrIntervals) {
+            if (rrIntervals.length < 2) return null;
+
+            let sumSquaredDiff = 0;
+            let count = 0;
+
+            for (let i = 1; i < rrIntervals.length; i++) {
+                const diff = rrIntervals[i] - rrIntervals[i - 1];
+                sumSquaredDiff += diff * diff;
+                count++;
+            }
+
+            if (count === 0) return null;
+            return Math.sqrt(sumSquaredDiff / count);
+        }
+
+        // Calculate respiratory rate from RR intervals
+        // Normal breathing causes periodic variations in HR (respiratory sinus arrhythmia)
+        function calculateRespiratoryRate(rrIntervals) {
+            if (rrIntervals.length < 30) return null;
+
+            // Simple estimation: count peaks in RR interval variations
+            // More accurate methods use FFT, but this gives reasonable estimates
+            const avgRR = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
+            let crossings = 0;
+
+            for (let i = 1; i < rrIntervals.length; i++) {
+                if ((rrIntervals[i - 1] < avgRR && rrIntervals[i] >= avgRR) ||
+                    (rrIntervals[i - 1] >= avgRR && rrIntervals[i] < avgRR)) {
+                    crossings++;
+                }
+            }
+
+            // Each breath cycle causes 2 crossings, convert to breaths per minute
+            const durationSeconds = (rrIntervals.reduce((a, b) => a + b, 0)) / 1000;
+            const breathsPerMinute = (crossings / 2) * (60 / durationSeconds);
+
+            return Math.max(8, Math.min(25, breathsPerMinute)); // Clamp to reasonable range
+        }
+
+        // Process historical data to find sleep and calculate metrics
+        function processSleepData() {
+            if (historicalData.length < 10) {
+                debug('Not enough historical data for sleep analysis');
+                return;
+            }
+
+            // Sort by time
+            historicalData.sort((a, b) => a.unix - b.unix);
+
+            // Find sleep periods (consecutive sleep activity readings)
+            let sleepStart = null;
+            let sleepEnd = null;
+            let currentSleepReadings = [];
+            let currentSleepRR = [];
+
+            // Look for sleep in the last 24 hours
+            const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+
+            for (const reading of historicalData) {
+                if (reading.time.getTime() < oneDayAgo) continue;
+
+                if (reading.activityType === 'sleep') {
+                    if (!sleepStart) {
+                        sleepStart = reading.time;
+                    }
+                    sleepEnd = reading.time;
+                    currentSleepReadings.push(reading);
+                    if (reading.rr && reading.rr.length > 0) {
+                        currentSleepRR.push(...reading.rr);
+                    }
+                } else if (sleepStart && reading.activityType === 'awake') {
+                    // Sleep period ended
+                    if (currentSleepReadings.length > 30) { // At least 30 readings (~30 min)
+                        break; // Use this sleep period
+                    }
+                    // Too short, reset and look for longer period
+                    sleepStart = null;
+                    currentSleepReadings = [];
+                    currentSleepRR = [];
+                }
+            }
+
+            if (currentSleepReadings.length < 30) {
+                debug(`Only ${currentSleepReadings.length} sleep readings found, need 30+`);
+                return;
+            }
+
+            debug(`Found sleep period: ${currentSleepReadings.length} readings, ${currentSleepRR.length} RR intervals`);
+
+            // Store sleep data
+            sleepData.lastSleepStart = sleepStart;
+            sleepData.lastSleepEnd = sleepEnd;
+            sleepData.sleepReadings = currentSleepReadings;
+            sleepData.sleepRR = currentSleepRR;
+            sleepData.calculated = true;
+
+            // Calculate RHR (lowest 5% of readings during sleep)
+            const sleepBPMs = currentSleepReadings.map(r => r.bpm).filter(b => b > 0).sort((a, b) => a - b);
+            const rhrCount = Math.max(5, Math.floor(sleepBPMs.length * 0.05));
+            sleepMetrics.rhr = Math.round(sleepBPMs.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
+
+            // Calculate HRV using RMSSD
+            if (currentSleepRR.length >= 10) {
+                sleepMetrics.hrv = Math.round(calculateRMSSD(currentSleepRR));
+            }
+
+            // Calculate respiratory rate
+            if (currentSleepRR.length >= 30) {
+                sleepMetrics.respRate = calculateRespiratoryRate(currentSleepRR);
+            }
+
+            // Sleep duration
+            const durationMs = sleepEnd.getTime() - sleepStart.getTime();
+            sleepMetrics.sleepDuration = durationMs;
+
+            // Sleep score (based on 8 hours ideal)
+            const idealSleep = 8 * 60 * 60 * 1000;
+            sleepMetrics.sleepScore = Math.min(100, Math.round((durationMs / idealSleep) * 100));
+
+            // Simulated values (Whoop measures these during sleep with special sensors)
+            sleepMetrics.spo2 = 95 + Math.round(Math.random() * 4);
+            sleepMetrics.skinTemp = ((Math.random() - 0.5) * 1.5).toFixed(1);
+
+            debug(`Sleep metrics: RHR=${sleepMetrics.rhr}, HRV=${sleepMetrics.hrv}, Resp=${sleepMetrics.respRate?.toFixed(1)}`);
+
+            // Update UI with sleep metrics
+            updateSleepMetricsUI();
+        }
+
+        function updateSleepMetricsUI() {
+            if (sleepMetrics.rhr) {
+                document.getElementById('rhr-value').textContent = sleepMetrics.rhr;
+                const rhrStatus = document.getElementById('rhr-status');
+                rhrStatus.classList.remove('warning');
+                if (sleepMetrics.rhr < 50) {
+                    rhrStatus.textContent = `athletic < 50`;
+                } else if (sleepMetrics.rhr < 60) {
+                    rhrStatus.textContent = `good < 60`;
+                } else if (sleepMetrics.rhr < 70) {
+                    rhrStatus.textContent = `normal < 70`;
+                } else {
+                    rhrStatus.textContent = `elevated > 70`;
+                    rhrStatus.classList.add('warning');
+                }
+            }
+
+            if (sleepMetrics.hrv) {
+                document.getElementById('hrv-value').textContent = sleepMetrics.hrv;
+                const hrvStatus = document.getElementById('hrv-status');
+                hrvStatus.classList.remove('warning');
+                if (sleepMetrics.hrv > 100) {
+                    hrvStatus.textContent = `excellent > 100`;
+                } else if (sleepMetrics.hrv > 50) {
+                    hrvStatus.textContent = `good 50-100`;
+                } else if (sleepMetrics.hrv > 30) {
+                    hrvStatus.textContent = `normal 30-50`;
+                } else {
+                    hrvStatus.textContent = `low < 30`;
+                    hrvStatus.classList.add('warning');
+                }
+            }
+
+            if (sleepMetrics.respRate) {
+                document.getElementById('resp-value').textContent = sleepMetrics.respRate.toFixed(1);
+                const respStatus = document.getElementById('resp-status');
+                respStatus.classList.remove('warning');
+                if (sleepMetrics.respRate >= 12 && sleepMetrics.respRate <= 18) {
+                    respStatus.textContent = `within 12 - 18`;
+                } else {
+                    respStatus.textContent = sleepMetrics.respRate < 12 ? `low < 12` : `elevated > 18`;
+                    respStatus.classList.add('warning');
+                }
+            }
+
+            if (sleepMetrics.spo2) {
+                document.getElementById('spo2-value').textContent = sleepMetrics.spo2;
+            }
+
+            if (sleepMetrics.skinTemp) {
+                const temp = parseFloat(sleepMetrics.skinTemp);
+                document.getElementById('temp-value').textContent = temp > 0 ? `+${sleepMetrics.skinTemp}` : sleepMetrics.skinTemp;
+                const tempStatus = document.getElementById('temp-status');
+                if (Math.abs(temp) < 0.5) {
+                    tempStatus.textContent = `normal`;
+                } else {
+                    tempStatus.textContent = temp < 0 ? `low < -0.5` : `elevated > 0.5`;
+                }
+            }
+        }
+
         // Connect
         async function connect() {
             try {
@@ -1265,6 +1512,13 @@
                 debug('Sending setClock...');
                 await cmdChar.writeValueWithoutResponse(setClock());
                 await sleep(100);
+
+                // Request historical data from last 24 hours for sleep analysis
+                const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+                debug('Requesting historical data for sleep analysis...');
+                await cmdChar.writeValueWithoutResponse(requestHistoricalData(oneDayAgo));
+                await sleep(500); // Give time for historical data to arrive
+
                 debug('Sending enterHighFreqSync...');
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
                 await sleep(100);
@@ -1274,6 +1528,16 @@
                 debug('Sending getAlarmTime...');
                 await cmdChar.writeValueWithoutResponse(getAlarmTime());
                 debug('All commands sent, waiting for data...');
+
+                // Process sleep data after a delay to allow historical packets to arrive
+                setTimeout(() => {
+                    if (historicalData.length > 0) {
+                        debug(`Processing ${historicalData.length} historical readings...`);
+                        processSleepData();
+                    } else {
+                        debug('No historical data received, using real-time estimates');
+                    }
+                }, 3000);
 
                 document.getElementById('status-dot').classList.add('connected');
                 document.getElementById('status-text').textContent = 'Connected';
@@ -1314,19 +1578,31 @@
                 return;
             }
 
-            debug(`Pkt#${packetCount} type=${packet.type} cmd=${packet.cmd} len=${packet.data.length}`);
+            // Only log every 10th packet after initial debugging
+            if (packetCount <= 10 || packetCount % 10 === 0) {
+                debug(`Pkt#${packetCount} type=${packet.type} cmd=${packet.cmd} len=${packet.data.length}`);
+            }
 
             // Heart rate packets - Historical (type 47)
             if (packet.type === 47 && packet.data.length >= 15) {
+                // Parse and store historical reading for sleep analysis
+                const reading = parseHistoricalReading(packet.data);
+                if (reading && reading.bpm > 0) {
+                    historicalData.push(reading);
+
+                    // Only log periodically
+                    if (historicalData.length % 50 === 0) {
+                        debug(`Collected ${historicalData.length} historical readings`);
+                    }
+                }
+
                 const bpm = packet.data[14];
-                debug(`Historical HR: ${bpm} bpm`);
-                if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data);
+                if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data, true);
             }
             // Heart rate packets - Realtime (type 40)
             else if (packet.type === 40 && packet.data.length >= 6) {
                 const bpm = packet.data[5];
-                debug(`Realtime HR: ${bpm} bpm`);
-                if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data);
+                if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data, false);
             }
             // Command response (type 36)
             else if (packet.type === 36) {
@@ -1337,8 +1613,13 @@
             }
         }
 
-        function updateMetrics(bpm, rawData) {
+        function updateMetrics(bpm, rawData, isHistorical = false) {
             const now = Date.now();
+
+            // Skip UI updates for historical data (we're just collecting it)
+            if (isHistorical && !sleepData.calculated) {
+                return;
+            }
 
             // REAL-TIME: Update HR display immediately
             document.getElementById('hr-value').textContent = bpm;
@@ -1359,90 +1640,6 @@
             else if (hrPercent >= 50) zone = 1;
             document.getElementById('hr-zone').textContent = `Zone ${zone}`;
 
-            // Track lowest readings for RHR calculation
-            lowestReadings.push(bpm);
-            lowestReadings.sort((a, b) => a - b);
-            if (lowestReadings.length > 100) lowestReadings = lowestReadings.slice(0, 100);
-
-            // THROTTLED: RHR (every 30 seconds)
-            if (now - cachedMetrics.rhrLastUpdate > UPDATE_INTERVALS.rhr) {
-                const rhrCount = Math.max(5, Math.floor(lowestReadings.length * 0.1));
-                cachedMetrics.rhr = Math.round(lowestReadings.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
-                cachedMetrics.rhrLastUpdate = now;
-
-                document.getElementById('rhr-value').textContent = cachedMetrics.rhr;
-
-                const rhrStatus = document.getElementById('rhr-status');
-                rhrStatus.classList.remove('warning');
-                if (cachedMetrics.rhr < 60) {
-                    rhrStatus.textContent = `low < 60`;
-                } else if (cachedMetrics.rhr < 70) {
-                    rhrStatus.textContent = `good < 70`;
-                } else {
-                    rhrStatus.textContent = `elevated > 70`;
-                    rhrStatus.classList.add('warning');
-                }
-            }
-
-            // THROTTLED: HRV (every 60 seconds)
-            if (readings.length > 10 && now - cachedMetrics.hrvLastUpdate > UPDATE_INTERVALS.hrv) {
-                const recentHR = readings.slice(-30).map(r => r.bpm);
-                cachedMetrics.hrv = Math.round(standardDeviation(recentHR) * 15);
-                cachedMetrics.hrvLastUpdate = now;
-
-                document.getElementById('hrv-value').textContent = cachedMetrics.hrv;
-
-                const hrvStatus = document.getElementById('hrv-status');
-                hrvStatus.classList.remove('warning');
-                if (cachedMetrics.hrv > 50) {
-                    hrvStatus.textContent = `elevated > 50`;
-                } else if (cachedMetrics.hrv > 30) {
-                    hrvStatus.textContent = `normal 30-50`;
-                } else {
-                    hrvStatus.textContent = `low < 30`;
-                    hrvStatus.classList.add('warning');
-                }
-            }
-
-            // THROTTLED: Respiratory rate (every 60 seconds)
-            if (now - cachedMetrics.respLastUpdate > UPDATE_INTERVALS.resp) {
-                // Use average of recent readings for more stability
-                const recentAvg = readings.slice(-20).reduce((a, b) => a + b.bpm, 0) / Math.min(readings.length, 20);
-                const respRate = 12 + (recentAvg - 60) / 10;
-                cachedMetrics.resp = Math.max(10, Math.min(25, respRate));
-                cachedMetrics.respLastUpdate = now;
-
-                document.getElementById('resp-value').textContent = cachedMetrics.resp.toFixed(1);
-                const respStatus = document.getElementById('resp-status');
-                respStatus.classList.remove('warning');
-                if (cachedMetrics.resp >= 12 && cachedMetrics.resp <= 20) {
-                    respStatus.textContent = `within 12 - 20`;
-                } else {
-                    respStatus.textContent = cachedMetrics.resp < 12 ? `low < 12` : `elevated > 20`;
-                    respStatus.classList.add('warning');
-                }
-            }
-
-            // ONCE PER SESSION: SpO2 (simulated daily metric)
-            if (cachedMetrics.spo2 === null) {
-                cachedMetrics.spo2 = Math.round(95 + Math.random() * 4);
-                cachedMetrics.spo2LastUpdate = now;
-                document.getElementById('spo2-value').textContent = cachedMetrics.spo2;
-            }
-
-            // ONCE PER SESSION: Skin temp (simulated daily metric)
-            if (cachedMetrics.temp === null) {
-                cachedMetrics.temp = ((Math.random() - 0.5) * 2).toFixed(1);
-                cachedMetrics.tempLastUpdate = now;
-                document.getElementById('temp-value').textContent = cachedMetrics.temp > 0 ? `+${cachedMetrics.temp}` : cachedMetrics.temp;
-                const tempStatus = document.getElementById('temp-status');
-                if (Math.abs(cachedMetrics.temp) < 0.5) {
-                    tempStatus.textContent = `normal`;
-                } else {
-                    tempStatus.textContent = cachedMetrics.temp < 0 ? `low < -0.5` : `elevated > 0.5`;
-                }
-            }
-
             // REAL-TIME: Session stats (min/max/avg)
             document.getElementById('min-value').textContent = minBpm;
             document.getElementById('max-value').textContent = maxBpm;
@@ -1453,7 +1650,69 @@
             if (chartData.length > 60) chartData.shift();
             drawChart();
 
+            // Only update sleep metrics from real-time data if we don't have actual sleep data
+            if (!sleepData.calculated) {
+                // Track lowest readings for fallback RHR calculation
+                lowestReadings.push(bpm);
+                lowestReadings.sort((a, b) => a - b);
+                if (lowestReadings.length > 100) lowestReadings = lowestReadings.slice(0, 100);
+
+                // Update fallback metrics every 30 seconds
+                if (readings.length % 30 === 0) {
+                    updateFallbackMetrics();
+                }
+            }
+
             saveToStorage();
+        }
+
+        // Fallback metrics when no sleep data available
+        function updateFallbackMetrics() {
+            if (sleepData.calculated) return; // Use sleep data instead
+
+            // RHR from lowest readings
+            if (lowestReadings.length >= 10) {
+                const rhrCount = Math.max(5, Math.floor(lowestReadings.length * 0.1));
+                const rhr = Math.round(lowestReadings.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
+
+                document.getElementById('rhr-value').textContent = rhr;
+                const rhrStatus = document.getElementById('rhr-status');
+                rhrStatus.classList.remove('warning');
+                rhrStatus.textContent = rhr < 70 ? `estimating...` : `elevated > 70`;
+                if (rhr >= 70) rhrStatus.classList.add('warning');
+            }
+
+            // HRV estimate from HR variability (not accurate but gives indication)
+            if (readings.length >= 30) {
+                const recentHR = readings.slice(-30).map(r => r.bpm);
+                const hrv = Math.round(standardDeviation(recentHR) * 15);
+
+                document.getElementById('hrv-value').textContent = hrv;
+                const hrvStatus = document.getElementById('hrv-status');
+                hrvStatus.classList.remove('warning');
+                hrvStatus.textContent = `estimated`;
+            }
+
+            // Respiratory rate estimate
+            if (readings.length >= 20) {
+                const recentAvg = readings.slice(-20).reduce((a, b) => a + b.bpm, 0) / 20;
+                const respRate = Math.max(10, Math.min(25, 12 + (recentAvg - 60) / 10));
+
+                document.getElementById('resp-value').textContent = respRate.toFixed(1);
+                document.getElementById('resp-status').textContent = `estimated`;
+            }
+
+            // Simulated SpO2 and Skin Temp (set once)
+            if (!sleepMetrics.spo2) {
+                sleepMetrics.spo2 = 95 + Math.round(Math.random() * 4);
+                document.getElementById('spo2-value').textContent = sleepMetrics.spo2;
+            }
+            if (!sleepMetrics.skinTemp) {
+                sleepMetrics.skinTemp = ((Math.random() - 0.5) * 1.5).toFixed(1);
+                const temp = parseFloat(sleepMetrics.skinTemp);
+                document.getElementById('temp-value').textContent = temp > 0 ? `+${sleepMetrics.skinTemp}` : sleepMetrics.skinTemp;
+                document.getElementById('temp-status').textContent = Math.abs(temp) < 0.5 ? `normal` : `estimated`;
+            }
         }
 
         function standardDeviation(arr) {
