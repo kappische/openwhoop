@@ -374,6 +374,119 @@
             background: var(--border);
         }
 
+        /* Alarm Mode Selector */
+        .mode-selector {
+            display: flex;
+            background: var(--card-light);
+            border-radius: 8px;
+            padding: 4px;
+            margin-bottom: 20px;
+        }
+        .mode-btn {
+            flex: 1;
+            padding: 10px;
+            border: none;
+            border-radius: 6px;
+            background: transparent;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .mode-btn.active {
+            background: var(--green);
+            color: #000;
+        }
+
+        /* Time Display */
+        .time-display {
+            font-size: 56px;
+            font-weight: 300;
+            text-align: center;
+            margin: 20px 0;
+        }
+
+        /* Sleep Goal Selector */
+        .sleep-goal-selector {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 20px;
+        }
+        .goal-btn {
+            flex: 1;
+            padding: 16px 8px;
+            background: var(--card-light);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            color: white;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .goal-btn.active {
+            border-color: var(--green);
+            background: rgba(0, 209, 167, 0.1);
+        }
+        .goal-percent {
+            display: block;
+            font-size: 24px;
+            font-weight: 600;
+        }
+        .goal-label {
+            display: block;
+            font-size: 11px;
+            color: var(--text-secondary);
+            margin-top: 4px;
+        }
+        .goal-btn.active .goal-label {
+            color: var(--green);
+        }
+
+        /* Sleep Info Rows */
+        .sleep-info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+            font-size: 14px;
+        }
+        .sleep-info-row:last-of-type {
+            border-bottom: none;
+        }
+        .sleep-info-row.highlight {
+            color: var(--green);
+            font-weight: 500;
+        }
+        .time-input-small {
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 14px;
+            text-align: right;
+        }
+
+        /* Alarm Status Box */
+        .alarm-status-box {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 16px;
+            background: var(--card-light);
+            border-radius: 12px;
+            margin: 20px 0;
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .alarm-status-box.active {
+            background: rgba(0, 209, 167, 0.1);
+            color: var(--green);
+        }
+        .status-icon { font-size: 18px; }
+
+        .alarm-mode-content { }
+
         /* Hidden */
         .hidden { display: none !important; }
 
@@ -544,32 +657,83 @@
 
         <!-- Alarm Tab -->
         <div class="tab-content" id="tab-alarm">
+            <!-- Main Alarm Card -->
             <div class="alarm-card">
                 <div class="alarm-header">
                     <div class="alarm-title">Haptic Alarm</div>
                     <div class="alarm-toggle" id="alarm-toggle" onclick="toggleAlarm()"></div>
                 </div>
-                <input type="time" class="alarm-time-input" id="alarm-time" value="07:00" onchange="updateAlarmDisplay()">
-                <div id="alarm-status" style="text-align: center; color: var(--text-secondary); font-size: 13px; margin-bottom: 16px;">
-                    No alarm set
+
+                <!-- Alarm Mode Selector -->
+                <div class="mode-selector">
+                    <button class="mode-btn active" data-mode="exact" onclick="setAlarmMode('exact')">Exact Time</button>
+                    <button class="mode-btn" data-mode="sleep" onclick="setAlarmMode('sleep')">Sleep Goal</button>
                 </div>
-                <button class="connect-btn" style="width: 100%; margin-bottom: 16px;" onclick="setAlarm()">Set Alarm</button>
+
+                <!-- Exact Time Mode -->
+                <div id="mode-exact" class="alarm-mode-content">
+                    <div class="time-display" id="exact-time-display">7:00 AM</div>
+                    <input type="time" class="alarm-time-input" id="alarm-time" value="07:00" onchange="updateTimeDisplay()">
+                </div>
+
+                <!-- Sleep Goal Mode -->
+                <div id="mode-sleep" class="alarm-mode-content hidden">
+                    <div class="sleep-goal-selector">
+                        <button class="goal-btn" data-goal="100" onclick="setSleepGoal(100)">
+                            <span class="goal-percent">100%</span>
+                            <span class="goal-label">Peak</span>
+                        </button>
+                        <button class="goal-btn active" data-goal="85" onclick="setSleepGoal(85)">
+                            <span class="goal-percent">85%</span>
+                            <span class="goal-label">Perform</span>
+                        </button>
+                        <button class="goal-btn" data-goal="70" onclick="setSleepGoal(70)">
+                            <span class="goal-percent">70%</span>
+                            <span class="goal-label">Get By</span>
+                        </button>
+                    </div>
+                    <div class="sleep-info-row">
+                        <span>Sleep Need</span>
+                        <span id="sleep-need-display">8h 0m</span>
+                    </div>
+                    <div class="sleep-info-row">
+                        <span>Latest Wake</span>
+                        <input type="time" class="time-input-small" id="latest-wake" value="07:00" onchange="updateSleepCalc()">
+                    </div>
+                    <div class="sleep-info-row highlight">
+                        <span>Suggested Bedtime</span>
+                        <span id="bedtime-display">11:00 PM</span>
+                    </div>
+                </div>
+
+                <!-- Alarm Status -->
+                <div class="alarm-status-box" id="alarm-status">
+                    <span class="status-icon">⏰</span>
+                    <span class="status-text">No alarm set</span>
+                </div>
+
+                <button class="connect-btn" style="width: 100%;" onclick="setAlarm()">Set Alarm</button>
             </div>
 
+            <!-- Nap Timer -->
             <div class="alarm-card">
-                <div class="alarm-title" style="margin-bottom: 16px;">Quick Timer</div>
+                <div class="alarm-title" style="margin-bottom: 16px;">Nap Timer</div>
                 <div class="alarm-presets">
-                    <button class="preset-btn" onclick="quickAlarm(5)">5 min</button>
-                    <button class="preset-btn" onclick="quickAlarm(10)">10 min</button>
-                    <button class="preset-btn" onclick="quickAlarm(15)">15 min</button>
-                    <button class="preset-btn" onclick="quickAlarm(30)">30 min</button>
-                    <button class="preset-btn" onclick="quickAlarm(45)">45 min</button>
-                    <button class="preset-btn" onclick="quickAlarm(60)">1 hr</button>
+                    <button class="preset-btn" onclick="quickAlarm(10)">10m</button>
+                    <button class="preset-btn" onclick="quickAlarm(20)">20m</button>
+                    <button class="preset-btn" onclick="quickAlarm(30)">30m</button>
+                    <button class="preset-btn" onclick="quickAlarm(45)">45m</button>
+                    <button class="preset-btn" onclick="quickAlarm(60)">1h</button>
+                    <button class="preset-btn" onclick="quickAlarm(90)">1.5h</button>
                 </div>
             </div>
 
+            <!-- Test -->
             <div class="alarm-card">
                 <button class="preset-btn" style="width: 100%;" onclick="testVibrate()">Test Vibration</button>
+                <p style="text-align: center; color: var(--text-secondary); font-size: 11px; margin-top: 12px;">
+                    Double-tap your WHOOP to dismiss alarm
+                </p>
             </div>
         </div>
 
@@ -864,34 +1028,103 @@
             ctx.stroke();
         }
 
+        // Alarm State
+        let alarmMode = 'exact';
+        let sleepGoalPercent = 85;
+        const baseSleepNeed = 8 * 60; // 8 hours in minutes
+
         // Alarm Functions
         function toggleAlarm() {
             alarmEnabled = !alarmEnabled;
             document.getElementById('alarm-toggle').classList.toggle('active', alarmEnabled);
             if (!alarmEnabled && cmdChar) {
                 cmdChar.writeValueWithoutResponse(disableAlarmCmd());
-                document.getElementById('alarm-status').textContent = 'Alarm disabled';
+                updateAlarmStatus(null);
+            }
+        }
+
+        function setAlarmMode(mode) {
+            alarmMode = mode;
+            document.querySelectorAll('.mode-btn').forEach(btn => {
+                btn.classList.toggle('active', btn.dataset.mode === mode);
+            });
+            document.getElementById('mode-exact').classList.toggle('hidden', mode !== 'exact');
+            document.getElementById('mode-sleep').classList.toggle('hidden', mode !== 'sleep');
+            if (mode === 'sleep') updateSleepCalc();
+        }
+
+        function setSleepGoal(percent) {
+            sleepGoalPercent = percent;
+            document.querySelectorAll('.goal-btn').forEach(btn => {
+                btn.classList.toggle('active', parseInt(btn.dataset.goal) === percent);
+            });
+            updateSleepCalc();
+        }
+
+        function updateTimeDisplay() {
+            const timeVal = document.getElementById('alarm-time').value;
+            const [h, m] = timeVal.split(':').map(Number);
+            const date = new Date();
+            date.setHours(h, m);
+            document.getElementById('exact-time-display').textContent =
+                date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        }
+
+        function updateSleepCalc() {
+            const sleepNeedMins = Math.round(baseSleepNeed * (sleepGoalPercent / 100));
+            const hours = Math.floor(sleepNeedMins / 60);
+            const mins = sleepNeedMins % 60;
+            document.getElementById('sleep-need-display').textContent = `${hours}h ${mins}m`;
+
+            // Calculate bedtime
+            const wakeVal = document.getElementById('latest-wake').value;
+            const [wh, wm] = wakeVal.split(':').map(Number);
+            const wake = new Date();
+            wake.setHours(wh, wm, 0, 0);
+
+            const bedtime = new Date(wake.getTime() - sleepNeedMins * 60000);
+            document.getElementById('bedtime-display').textContent =
+                bedtime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        }
+
+        function updateAlarmStatus(alarm) {
+            const statusBox = document.getElementById('alarm-status');
+            if (alarm) {
+                const timeStr = alarm.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                statusBox.innerHTML = `<span class="status-icon">✓</span><span class="status-text">Alarm set for ${timeStr}</span>`;
+                statusBox.classList.add('active');
+            } else {
+                statusBox.innerHTML = `<span class="status-icon">⏰</span><span class="status-text">No alarm set</span>`;
+                statusBox.classList.remove('active');
             }
         }
 
         async function setAlarm() {
             if (!cmdChar) return showError('Not connected');
 
-            const timeVal = document.getElementById('alarm-time').value;
-            const [h, m] = timeVal.split(':').map(Number);
+            let alarmDate;
 
-            const now = new Date();
-            const alarm = new Date(now);
-            alarm.setHours(h, m, 0, 0);
-            if (alarm <= now) alarm.setDate(alarm.getDate() + 1);
+            if (alarmMode === 'exact') {
+                const timeVal = document.getElementById('alarm-time').value;
+                const [h, m] = timeVal.split(':').map(Number);
+                alarmDate = new Date();
+                alarmDate.setHours(h, m, 0, 0);
+                if (alarmDate <= new Date()) alarmDate.setDate(alarmDate.getDate() + 1);
+            } else {
+                // Sleep Goal mode - set alarm for latest wake time
+                const wakeVal = document.getElementById('latest-wake').value;
+                const [h, m] = wakeVal.split(':').map(Number);
+                alarmDate = new Date();
+                alarmDate.setHours(h, m, 0, 0);
+                if (alarmDate <= new Date()) alarmDate.setDate(alarmDate.getDate() + 1);
+            }
 
             try {
-                await cmdChar.writeValueWithoutResponse(setAlarmTime(Math.floor(alarm.getTime() / 1000)));
-                currentAlarm = alarm;
+                await cmdChar.writeValueWithoutResponse(setAlarmTime(Math.floor(alarmDate.getTime() / 1000)));
+                currentAlarm = alarmDate;
                 alarmEnabled = true;
                 document.getElementById('alarm-toggle').classList.add('active');
-                document.getElementById('alarm-status').textContent =
-                    `Alarm set for ${alarm.toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'})}`;
+                updateAlarmStatus(alarmDate);
                 saveToStorage();
             } catch (e) {
                 showError('Failed to set alarm');
@@ -907,7 +1140,7 @@
                 currentAlarm = alarm;
                 alarmEnabled = true;
                 document.getElementById('alarm-toggle').classList.add('active');
-                document.getElementById('alarm-status').textContent = `Timer: ${mins} minutes`;
+                updateAlarmStatus(alarm);
                 saveToStorage();
             } catch (e) {
                 showError('Failed to set timer');
@@ -922,6 +1155,12 @@
                 showError('Failed to vibrate');
             }
         }
+
+        // Initialize alarm display
+        document.addEventListener('DOMContentLoaded', () => {
+            updateTimeDisplay();
+            updateSleepCalc();
+        });
 
         // Storage
         function saveToStorage() {
