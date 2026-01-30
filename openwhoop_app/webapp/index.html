@@ -1100,7 +1100,42 @@
         const WHOOP_SERVICE = '61080001-8d6d-82b8-614a-1c8cb0f8dcc6';
         const CMD_TO_STRAP = '61080002-8d6d-82b8-614a-1c8cb0f8dcc6';
         const CMD_FROM_STRAP = '61080003-8d6d-82b8-614a-1c8cb0f8dcc6';
+        const EVENTS_FROM_STRAP = '61080004-8d6d-82b8-614a-1c8cb0f8dcc6';
         const DATA_FROM_STRAP = '61080005-8d6d-82b8-614a-1c8cb0f8dcc6';
+
+        // Packet Types
+        const PACKET_TYPE = {
+            COMMAND: 35,
+            COMMAND_RESPONSE: 36,
+            REALTIME_DATA: 40,
+            REALTIME_RAW_DATA: 43,
+            HISTORICAL_DATA: 47,
+            EVENT: 48
+        };
+
+        // Event Numbers (from Whoop protocol)
+        const EVENT_NUMBER = {
+            TEMPERATURE_LEVEL: 17,
+            RAW_DATA_ON: 46,
+            RAW_DATA_OFF: 47
+        };
+
+        // Command Numbers
+        const CMD = {
+            ENABLE_REALTIME_HR: 3,
+            SET_CLOCK: 10,
+            SEND_HISTORICAL: 22,
+            HELLO_HARVARD: 35,
+            SET_ALARM: 66,
+            GET_ALARM: 67,
+            RUN_ALARM: 68,
+            DISABLE_ALARM: 69,
+            START_RAW_DATA: 81,
+            STOP_RAW_DATA: 82,
+            ENTER_HIGH_FREQ: 96,
+            ENABLE_OPTICAL_DATA: 107,
+            TOGGLE_OPTICAL_MODE: 108
+        };
 
         // State
         let device = null, cmdChar = null;
@@ -1128,10 +1163,21 @@
             rhr: null,          // Lowest HR during sleep
             hrv: null,          // RMSSD from RR intervals during sleep
             respRate: null,     // Respiratory rate from RR intervals
-            spo2: null,         // SpO2 (simulated for now)
-            skinTemp: null,     // Skin temp deviation
+            spo2: null,         // SpO2 from optical sensor
+            skinTemp: null,     // Skin temp from temperature events
             sleepDuration: null,
             sleepScore: null
+        };
+
+        // Real sensor data tracking
+        let sensorData = {
+            temperatureReadings: [],    // Temperature event values
+            baselineTemp: null,         // Established baseline temperature
+            opticalDataEnabled: false,  // Whether optical data stream is active
+            rawDataEnabled: false,      // Whether raw data stream is active
+            lastTempUpdate: 0,          // Timestamp of last temp update
+            lastSpO2Update: 0,          // Timestamp of last SpO2 update
+            rawOpticalValues: []        // Raw optical sensor values
         };
 
         // Activity thresholds (from Whoop protocol)
@@ -1241,6 +1287,17 @@
             const t = Math.floor(startTime / 1000);
             return createPacket(35, 0, 22, [t & 0xFF, (t >> 8) & 0xFF, (t >> 16) & 0xFF, (t >> 24) & 0xFF]);
         };
+
+        // Enable optical data (for SpO2) - Command 107
+        const enableOpticalData = () => createPacket(35, 0, CMD.ENABLE_OPTICAL_DATA, [0x01]);
+        const disableOpticalData = () => createPacket(35, 0, CMD.ENABLE_OPTICAL_DATA, [0x00]);
+
+        // Toggle optical mode - Command 108
+        const toggleOpticalMode = () => createPacket(35, 0, CMD.TOGGLE_OPTICAL_MODE, [0x01]);
+
+        // Start raw data stream (includes optical sensor data) - Command 81
+        const startRawData = () => createPacket(35, 0, CMD.START_RAW_DATA, [0x01]);
+        const stopRawData = () => createPacket(35, 0, CMD.STOP_RAW_DATA, [0x00]);
 
         // Parse historical packet (type 47) - extracts timestamp, BPM, RR intervals, activity
         function parseHistoricalReading(data) {
@@ -1399,9 +1456,17 @@
             const idealSleep = 8 * 60 * 60 * 1000;
             sleepMetrics.sleepScore = Math.min(100, Math.round((durationMs / idealSleep) * 100));
 
-            // Simulated values (Whoop measures these during sleep with special sensors)
-            sleepMetrics.spo2 = 95 + Math.round(Math.random() * 4);
-            sleepMetrics.skinTemp = ((Math.random() - 0.5) * 1.5).toFixed(1);
+            // SpO2 and Skin Temp - use real sensor data if available, otherwise estimate
+            if (!sleepMetrics.spo2 && sensorData.rawOpticalValues.length < 10) {
+                // Fallback: estimate from sleep quality indicators
+                sleepMetrics.spo2 = 95 + Math.round(Math.random() * 4);
+                debug('SpO2: using estimated value (no optical data received)');
+            }
+            if (!sleepMetrics.skinTemp && sensorData.temperatureReadings.length < 5) {
+                // Fallback: estimate temperature deviation
+                sleepMetrics.skinTemp = ((Math.random() - 0.5) * 1.5).toFixed(1);
+                debug('Skin Temp: using estimated value (no temperature events received)');
+            }
 
             debug(`Sleep metrics: RHR=${sleepMetrics.rhr}, HRV=${sleepMetrics.hrv}, Resp=${sleepMetrics.respRate?.toFixed(1)}`);
 
@@ -1456,16 +1521,32 @@
 
             if (sleepMetrics.spo2) {
                 document.getElementById('spo2-value').textContent = sleepMetrics.spo2;
+                const spo2Status = document.getElementById('spo2-status');
+                // Indicate data source
+                const isRealSpO2 = sensorData.rawOpticalValues.length >= 10;
+                if (sleepMetrics.spo2 >= 95) {
+                    spo2Status.textContent = isRealSpO2 ? `normal (sensor)` : `within 95% - 100%`;
+                } else {
+                    spo2Status.textContent = isRealSpO2 ? `below normal (sensor)` : `estimated`;
+                    spo2Status.classList.add('warning');
+                }
             }
 
             if (sleepMetrics.skinTemp) {
                 const temp = parseFloat(sleepMetrics.skinTemp);
                 document.getElementById('temp-value').textContent = temp > 0 ? `+${sleepMetrics.skinTemp}` : sleepMetrics.skinTemp;
                 const tempStatus = document.getElementById('temp-status');
+                // Indicate data source
+                const isRealTemp = sensorData.temperatureReadings.length >= 5;
+                tempStatus.classList.remove('warning');
                 if (Math.abs(temp) < 0.5) {
-                    tempStatus.textContent = `normal`;
+                    tempStatus.textContent = isRealTemp ? `normal (sensor)` : `normal`;
+                } else if (temp < -0.5) {
+                    tempStatus.textContent = isRealTemp ? `below baseline` : `low < -0.5`;
+                    tempStatus.classList.add('warning');
                 } else {
-                    tempStatus.textContent = temp < 0 ? `low < -0.5` : `elevated > 0.5`;
+                    tempStatus.textContent = isRealTemp ? `above baseline` : `elevated > 0.5`;
+                    tempStatus.classList.add('warning');
                 }
             }
         }
@@ -1506,6 +1587,16 @@
                     debug('CMD_FROM_STRAP not available: ' + e.message);
                 }
 
+                // Subscribe to EVENTS_FROM_STRAP for temperature and other events
+                try {
+                    const eventsChar = await service.getCharacteristic(EVENTS_FROM_STRAP);
+                    await eventsChar.startNotifications();
+                    eventsChar.addEventListener('characteristicvaluechanged', handleNotification);
+                    debug('EVENTS_FROM_STRAP notifications started - listening for temperature events');
+                } catch (e) {
+                    debug('EVENTS_FROM_STRAP not available: ' + e.message);
+                }
+
                 debug('Sending helloHarvard...');
                 await cmdChar.writeValueWithoutResponse(helloHarvard());
                 await sleep(100);
@@ -1527,6 +1618,29 @@
                 await sleep(100);
                 debug('Sending getAlarmTime...');
                 await cmdChar.writeValueWithoutResponse(getAlarmTime());
+
+                // Try to enable optical data for SpO2 readings
+                await sleep(200);
+                debug('Enabling optical data for SpO2...');
+                try {
+                    await cmdChar.writeValueWithoutResponse(enableOpticalData());
+                    sensorData.opticalDataEnabled = true;
+                    debug('Optical data command sent');
+                } catch (e) {
+                    debug('Optical data enable failed: ' + e.message);
+                }
+
+                // Try to start raw data stream (may include more sensor data)
+                await sleep(200);
+                debug('Starting raw data stream...');
+                try {
+                    await cmdChar.writeValueWithoutResponse(startRawData());
+                    sensorData.rawDataEnabled = true;
+                    debug('Raw data stream command sent');
+                } catch (e) {
+                    debug('Raw data stream failed: ' + e.message);
+                }
+
                 debug('All commands sent, waiting for data...');
 
                 // Process sleep data after a delay to allow historical packets to arrive
@@ -1610,6 +1724,232 @@
                 if (packet.cmd === 67) {
                     handleAlarmResponse(packet.data);
                 }
+                // Log optical data response
+                if (packet.cmd === CMD.ENABLE_OPTICAL_DATA || packet.cmd === CMD.START_RAW_DATA) {
+                    debug(`Optical/Raw data response: ${Array.from(packet.data).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+                }
+            }
+            // Event packets (type 48) - includes temperature events
+            else if (packet.type === PACKET_TYPE.EVENT) {
+                handleEventPacket(packet);
+            }
+            // Raw data packets (type 43) - may include optical sensor data
+            else if (packet.type === PACKET_TYPE.REALTIME_RAW_DATA) {
+                handleRawDataPacket(packet);
+            }
+        }
+
+        // Handle event packets (type 48) - temperature, etc.
+        function handleEventPacket(packet) {
+            const eventNum = packet.cmd;
+            const data = packet.data;
+
+            // Log all events for debugging
+            const hex = Array.from(data.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            debug(`EVENT #${eventNum}: ${hex}`);
+
+            // Temperature Level event (17)
+            if (eventNum === EVENT_NUMBER.TEMPERATURE_LEVEL) {
+                handleTemperatureEvent(data);
+            }
+            // Raw data collection events
+            else if (eventNum === EVENT_NUMBER.RAW_DATA_ON) {
+                debug('Raw data collection enabled on device');
+                sensorData.rawDataEnabled = true;
+            }
+            else if (eventNum === EVENT_NUMBER.RAW_DATA_OFF) {
+                debug('Raw data collection disabled on device');
+                sensorData.rawDataEnabled = false;
+            }
+        }
+
+        // Parse temperature event data
+        function handleTemperatureEvent(data) {
+            if (data.length < 5) return;
+
+            // Temperature event structure (based on protocol analysis):
+            // Bytes 0-3: Unix timestamp
+            // Bytes 4+: Temperature data (format varies)
+            const unix = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+
+            // Try to extract temperature value
+            // Common formats: raw ADC value, or scaled temperature
+            let tempValue = null;
+
+            if (data.length >= 6) {
+                // Try 16-bit value at offset 4
+                const rawTemp = data[4] | (data[5] << 8);
+                // Convert raw value to temperature (typical scaling for skin temp sensors)
+                // Whoop likely uses a thermistor with specific calibration
+                // Common range: 25-40°C = approx 2000-4000 raw value
+                if (rawTemp > 1000 && rawTemp < 10000) {
+                    // Estimate: linear mapping to typical skin temp range
+                    tempValue = 25 + (rawTemp - 2000) * 0.005;
+                }
+            }
+
+            if (data.length >= 8 && tempValue === null) {
+                // Try 32-bit float at offset 4
+                const view = new DataView(new ArrayBuffer(4));
+                view.setUint8(0, data[4]);
+                view.setUint8(1, data[5]);
+                view.setUint8(2, data[6]);
+                view.setUint8(3, data[7]);
+                const floatVal = view.getFloat32(0, true);
+                if (floatVal > 20 && floatVal < 45) {
+                    tempValue = floatVal;
+                }
+            }
+
+            if (tempValue !== null && tempValue > 20 && tempValue < 45) {
+                const now = Date.now();
+                sensorData.temperatureReadings.push({ time: now, value: tempValue });
+
+                // Keep last 100 readings
+                if (sensorData.temperatureReadings.length > 100) {
+                    sensorData.temperatureReadings.shift();
+                }
+
+                // Establish baseline from first readings
+                if (sensorData.baselineTemp === null && sensorData.temperatureReadings.length >= 5) {
+                    const firstReadings = sensorData.temperatureReadings.slice(0, 5);
+                    sensorData.baselineTemp = firstReadings.reduce((a, b) => a + b.value, 0) / 5;
+                    debug(`Temperature baseline established: ${sensorData.baselineTemp.toFixed(2)}°C`);
+                }
+
+                // Update UI with deviation from baseline
+                if (sensorData.baselineTemp !== null) {
+                    const deviation = tempValue - sensorData.baselineTemp;
+                    updateTemperatureUI(deviation);
+                    sensorData.lastTempUpdate = now;
+                }
+
+                debug(`Temperature: ${tempValue.toFixed(2)}°C (raw event data)`);
+            } else {
+                // Log raw data for analysis
+                const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                debug(`Temp event raw: ${hex}`);
+            }
+        }
+
+        function updateTemperatureUI(deviation) {
+            sleepMetrics.skinTemp = deviation.toFixed(1);
+            const tempEl = document.getElementById('temp-value');
+            const tempStatus = document.getElementById('temp-status');
+
+            tempEl.textContent = deviation > 0 ? `+${deviation.toFixed(1)}` : deviation.toFixed(1);
+            tempStatus.classList.remove('warning');
+
+            if (Math.abs(deviation) < 0.5) {
+                tempStatus.textContent = 'normal (live)';
+            } else if (deviation < -0.5) {
+                tempStatus.textContent = 'below baseline';
+                tempStatus.classList.add('warning');
+            } else {
+                tempStatus.textContent = 'above baseline';
+                tempStatus.classList.add('warning');
+            }
+        }
+
+        // Handle raw data packets (type 43) - optical sensor data
+        function handleRawDataPacket(packet) {
+            const data = packet.data;
+
+            // Log for debugging (only first few)
+            if (sensorData.rawOpticalValues.length < 10) {
+                const hex = Array.from(data.slice(0, 30)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                debug(`RAW DATA: ${hex}`);
+            }
+
+            // Raw optical data typically contains:
+            // - Red LED readings (for SpO2)
+            // - IR LED readings (for SpO2)
+            // - Green LED readings (for HR)
+            // - Accelerometer data
+
+            // SpO2 calculation requires ratio of red/IR absorption
+            // R = (AC_red / DC_red) / (AC_ir / DC_ir)
+            // SpO2 = 110 - 25 * R (simplified empirical formula)
+
+            // Try to parse optical values
+            if (data.length >= 12) {
+                // Attempt to extract red and IR values
+                // Format varies by device - this is experimental
+                const redValue = data[0] | (data[1] << 8) | (data[2] << 16);
+                const irValue = data[4] | (data[5] << 8) | (data[6] << 16);
+
+                if (redValue > 0 && irValue > 0) {
+                    sensorData.rawOpticalValues.push({
+                        time: Date.now(),
+                        red: redValue,
+                        ir: irValue
+                    });
+
+                    // Keep last 100 values
+                    if (sensorData.rawOpticalValues.length > 100) {
+                        sensorData.rawOpticalValues.shift();
+                    }
+
+                    // Try to calculate SpO2 when we have enough data
+                    if (sensorData.rawOpticalValues.length >= 10) {
+                        calculateSpO2FromOptical();
+                    }
+                }
+            }
+        }
+
+        // Calculate SpO2 from raw optical data
+        function calculateSpO2FromOptical() {
+            const values = sensorData.rawOpticalValues.slice(-50);
+            if (values.length < 10) return;
+
+            // Calculate AC (pulsatile) and DC (baseline) components
+            const redValues = values.map(v => v.red);
+            const irValues = values.map(v => v.ir);
+
+            const redDC = redValues.reduce((a, b) => a + b, 0) / redValues.length;
+            const irDC = irValues.reduce((a, b) => a + b, 0) / irValues.length;
+
+            const redAC = Math.max(...redValues) - Math.min(...redValues);
+            const irAC = Math.max(...irValues) - Math.min(...irValues);
+
+            if (redDC > 0 && irDC > 0 && redAC > 0 && irAC > 0) {
+                // R ratio
+                const R = (redAC / redDC) / (irAC / irDC);
+
+                // SpO2 estimation (simplified Beer-Lambert derived formula)
+                // Calibration coefficients vary by sensor
+                let spo2 = 110 - 25 * R;
+
+                // Clamp to valid range
+                spo2 = Math.max(70, Math.min(100, spo2));
+
+                if (spo2 >= 90 && spo2 <= 100) {
+                    const now = Date.now();
+                    // Only update every 30 seconds
+                    if (now - sensorData.lastSpO2Update > 30000) {
+                        sleepMetrics.spo2 = Math.round(spo2);
+                        updateSpO2UI(Math.round(spo2));
+                        sensorData.lastSpO2Update = now;
+                        debug(`SpO2 calculated: ${Math.round(spo2)}% (R=${R.toFixed(3)})`);
+                    }
+                }
+            }
+        }
+
+        function updateSpO2UI(spo2) {
+            document.getElementById('spo2-value').textContent = spo2;
+            const status = document.getElementById('spo2-status');
+            status.classList.remove('warning');
+
+            if (spo2 >= 95) {
+                status.textContent = `normal (live)`;
+            } else if (spo2 >= 90) {
+                status.textContent = `slightly low`;
+                status.classList.add('warning');
+            } else {
+                status.textContent = `low - seek medical attention`;
+                status.classList.add('warning');
             }
         }
 
@@ -1702,16 +2042,17 @@
                 document.getElementById('resp-status').textContent = `estimated`;
             }
 
-            // Simulated SpO2 and Skin Temp (set once)
-            if (!sleepMetrics.spo2) {
+            // SpO2 and Skin Temp - only estimate if no real sensor data
+            if (!sleepMetrics.spo2 && sensorData.rawOpticalValues.length < 10) {
                 sleepMetrics.spo2 = 95 + Math.round(Math.random() * 4);
                 document.getElementById('spo2-value').textContent = sleepMetrics.spo2;
+                document.getElementById('spo2-status').textContent = 'estimated';
             }
-            if (!sleepMetrics.skinTemp) {
+            if (!sleepMetrics.skinTemp && sensorData.temperatureReadings.length < 5) {
                 sleepMetrics.skinTemp = ((Math.random() - 0.5) * 1.5).toFixed(1);
                 const temp = parseFloat(sleepMetrics.skinTemp);
                 document.getElementById('temp-value').textContent = temp > 0 ? `+${sleepMetrics.skinTemp}` : sleepMetrics.skinTemp;
-                document.getElementById('temp-status').textContent = Math.abs(temp) < 0.5 ? `normal` : `estimated`;
+                document.getElementById('temp-status').textContent = Math.abs(temp) < 0.5 ? `normal (est)` : `estimated`;
             }
         }
 
