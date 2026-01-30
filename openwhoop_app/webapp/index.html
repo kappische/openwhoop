@@ -487,6 +487,118 @@
 
         .alarm-mode-content { }
 
+        /* Day Selector */
+        .day-selector {
+            display: flex;
+            gap: 6px;
+            margin-bottom: 16px;
+        }
+        .day-btn {
+            flex: 1;
+            padding: 10px 4px;
+            background: var(--card-light);
+            border: 2px solid var(--border);
+            border-radius: 8px;
+            color: var(--text-secondary);
+            font-size: 11px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .day-btn.active {
+            border-color: var(--green);
+            color: var(--green);
+            background: rgba(0, 209, 167, 0.1);
+        }
+        .day-btn.has-alarm {
+            background: rgba(0, 209, 167, 0.2);
+        }
+        .day-btn.has-alarm::after {
+            content: '•';
+            display: block;
+            font-size: 8px;
+            margin-top: 2px;
+        }
+
+        /* Schedule List */
+        .schedule-list {
+            margin-top: 16px;
+        }
+        .schedule-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 0;
+            border-bottom: 1px solid var(--border);
+        }
+        .schedule-item:last-child { border-bottom: none; }
+        .schedule-day {
+            font-size: 14px;
+            font-weight: 500;
+        }
+        .schedule-time {
+            font-size: 14px;
+            color: var(--text-secondary);
+        }
+        .schedule-time.set {
+            color: var(--green);
+        }
+
+        /* Confirmation Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 2000;
+            padding: 20px;
+        }
+        .modal-overlay.hidden { display: none; }
+        .modal-content {
+            background: var(--card);
+            border-radius: 16px;
+            padding: 24px;
+            max-width: 320px;
+            width: 100%;
+        }
+        .modal-title {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 12px;
+        }
+        .modal-text {
+            font-size: 14px;
+            color: var(--text-secondary);
+            margin-bottom: 20px;
+            line-height: 1.5;
+        }
+        .modal-buttons {
+            display: flex;
+            gap: 12px;
+        }
+        .modal-btn {
+            flex: 1;
+            padding: 12px;
+            border-radius: 8px;
+            border: none;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+        .modal-btn.cancel {
+            background: var(--card-light);
+            color: white;
+        }
+        .modal-btn.confirm {
+            background: var(--green);
+            color: #000;
+        }
+
         /* Hidden */
         .hidden { display: none !important; }
 
@@ -508,6 +620,21 @@
 </head>
 <body>
     <div class="error-toast" id="error-toast"></div>
+
+    <!-- Confirmation Modal -->
+    <div class="modal-overlay hidden" id="confirm-modal">
+        <div class="modal-content">
+            <div class="modal-title">Existing Alarm Found</div>
+            <div class="modal-text" id="modal-text">
+                An alarm is already set for <strong id="existing-alarm-time">7:00 AM</strong>.
+                Do you want to replace it?
+            </div>
+            <div class="modal-buttons">
+                <button class="modal-btn cancel" onclick="closeModal()">Cancel</button>
+                <button class="modal-btn confirm" onclick="confirmSetAlarm()">Replace</button>
+            </div>
+        </div>
+    </div>
 
     <div class="header">
         <div class="header-title">WHOOP</div>
@@ -668,6 +795,18 @@
                 <div class="mode-selector">
                     <button class="mode-btn active" data-mode="exact" onclick="setAlarmMode('exact')">Exact Time</button>
                     <button class="mode-btn" data-mode="sleep" onclick="setAlarmMode('sleep')">Sleep Goal</button>
+                    <button class="mode-btn" data-mode="schedule" onclick="setAlarmMode('schedule')">Schedule</button>
+                </div>
+
+                <!-- Day Selector (shown in exact and schedule modes) -->
+                <div class="day-selector" id="day-selector">
+                    <button class="day-btn" data-day="0" onclick="selectDay(0)">S</button>
+                    <button class="day-btn" data-day="1" onclick="selectDay(1)">M</button>
+                    <button class="day-btn" data-day="2" onclick="selectDay(2)">T</button>
+                    <button class="day-btn" data-day="3" onclick="selectDay(3)">W</button>
+                    <button class="day-btn" data-day="4" onclick="selectDay(4)">T</button>
+                    <button class="day-btn" data-day="5" onclick="selectDay(5)">F</button>
+                    <button class="day-btn" data-day="6" onclick="selectDay(6)">S</button>
                 </div>
 
                 <!-- Exact Time Mode -->
@@ -703,6 +842,13 @@
                     <div class="sleep-info-row highlight">
                         <span>Suggested Bedtime</span>
                         <span id="bedtime-display">11:00 PM</span>
+                    </div>
+                </div>
+
+                <!-- Schedule Mode - Weekly Overview -->
+                <div id="mode-schedule" class="alarm-mode-content hidden">
+                    <div class="schedule-list" id="schedule-list">
+                        <!-- Generated by JS -->
                     </div>
                 </div>
 
@@ -843,6 +989,7 @@
         const enterHighFreqSync = () => createPacket(35, 0, 96, []);
         const enableRealtimeHr = () => createPacket(35, 0, 3, [0x01]);
         const setAlarmTime = (t) => createPacket(35, 0, 66, [0x01, t & 0xFF, (t >> 8) & 0xFF, (t >> 16) & 0xFF, (t >> 24) & 0xFF, 0, 0, 0, 0]);
+        const getAlarmTime = () => createPacket(35, 0, 67, []);
         const runAlarmNow = () => createPacket(35, 0, 68, [0x00]);
         const disableAlarmCmd = () => createPacket(35, 0, 69, [0x00]);
 
@@ -878,6 +1025,9 @@
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
                 await sleep(100);
                 await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
+                await sleep(100);
+                // Read existing alarm from device
+                await cmdChar.writeValueWithoutResponse(getAlarmTime());
 
                 document.getElementById('status-dot').classList.add('connected');
                 document.getElementById('status-text').textContent = 'Connected';
@@ -905,12 +1055,18 @@
             const packet = parsePacket(data);
             if (!packet) return;
 
+            // Heart rate packets
             if (packet.type === 47 && packet.data.length >= 15) {
                 const bpm = packet.data[14];
                 if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data);
             } else if (packet.type === 40 && packet.data.length >= 6) {
                 const bpm = packet.data[5];
                 if (bpm > 0 && bpm < 250) updateMetrics(bpm, packet.data);
+            }
+
+            // Command response (type 36) - check for alarm response (cmd 67)
+            if (packet.type === 36 && packet.cmd === 67) {
+                handleAlarmResponse(packet.data);
             }
         }
 
@@ -1032,6 +1188,22 @@
         let alarmMode = 'exact';
         let sleepGoalPercent = 85;
         const baseSleepNeed = 8 * 60; // 8 hours in minutes
+        let selectedDay = new Date().getDay(); // 0=Sun, 1=Mon, etc.
+        let deviceAlarm = null; // Alarm read from device
+        let pendingAlarmDate = null; // Alarm waiting for confirmation
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        const dayAbbrev = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
+        // Weekly schedule: { 0: "07:00", 1: "06:30", ... } - null means no alarm
+        let weeklySchedule = {
+            0: null, // Sunday
+            1: "07:00", // Monday
+            2: "07:00", // Tuesday
+            3: "07:00", // Wednesday
+            4: "07:00", // Thursday
+            5: "07:00", // Friday
+            6: null  // Saturday
+        };
 
         // Alarm Functions
         function toggleAlarm() {
@@ -1040,6 +1212,7 @@
             if (!alarmEnabled && cmdChar) {
                 cmdChar.writeValueWithoutResponse(disableAlarmCmd());
                 updateAlarmStatus(null);
+                deviceAlarm = null;
             }
         }
 
@@ -1050,7 +1223,53 @@
             });
             document.getElementById('mode-exact').classList.toggle('hidden', mode !== 'exact');
             document.getElementById('mode-sleep').classList.toggle('hidden', mode !== 'sleep');
+            document.getElementById('mode-schedule').classList.toggle('hidden', mode !== 'schedule');
+            document.getElementById('day-selector').classList.toggle('hidden', mode === 'sleep');
+
             if (mode === 'sleep') updateSleepCalc();
+            if (mode === 'schedule') renderScheduleList();
+        }
+
+        function selectDay(day) {
+            selectedDay = day;
+            document.querySelectorAll('.day-btn').forEach(btn => {
+                btn.classList.toggle('active', parseInt(btn.dataset.day) === day);
+            });
+            // Update time input to show this day's scheduled time
+            if (weeklySchedule[day]) {
+                document.getElementById('alarm-time').value = weeklySchedule[day];
+                updateTimeDisplay();
+            }
+        }
+
+        function updateDayButtons() {
+            document.querySelectorAll('.day-btn').forEach(btn => {
+                const day = parseInt(btn.dataset.day);
+                btn.classList.toggle('active', day === selectedDay);
+                btn.classList.toggle('has-alarm', weeklySchedule[day] !== null);
+            });
+        }
+
+        function renderScheduleList() {
+            const list = document.getElementById('schedule-list');
+            list.innerHTML = dayNames.map((name, i) => {
+                const time = weeklySchedule[i];
+                const timeStr = time ? formatTime12h(time) : 'Off';
+                const isSet = time !== null;
+                return `
+                    <div class="schedule-item">
+                        <span class="schedule-day">${name}</span>
+                        <span class="schedule-time ${isSet ? 'set' : ''}">${timeStr}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function formatTime12h(time24) {
+            const [h, m] = time24.split(':').map(Number);
+            const date = new Date();
+            date.setHours(h, m);
+            return date.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
         }
 
         function setSleepGoal(percent) {
@@ -1087,11 +1306,13 @@
                 bedtime.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
         }
 
-        function updateAlarmStatus(alarm) {
+        function updateAlarmStatus(alarm, fromDevice = false) {
             const statusBox = document.getElementById('alarm-status');
             if (alarm) {
                 const timeStr = alarm.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
-                statusBox.innerHTML = `<span class="status-icon">✓</span><span class="status-text">Alarm set for ${timeStr}</span>`;
+                const dayStr = dayAbbrev[alarm.getDay()];
+                const source = fromDevice ? ' (from device)' : '';
+                statusBox.innerHTML = `<span class="status-icon">✓</span><span class="status-text">Alarm: ${dayStr} ${timeStr}${source}</span>`;
                 statusBox.classList.add('active');
             } else {
                 statusBox.innerHTML = `<span class="status-icon">⏰</span><span class="status-text">No alarm set</span>`;
@@ -1099,29 +1320,64 @@
             }
         }
 
-        async function setAlarm() {
-            if (!cmdChar) return showError('Not connected');
-
-            let alarmDate;
-
-            if (alarmMode === 'exact') {
-                const timeVal = document.getElementById('alarm-time').value;
-                const [h, m] = timeVal.split(':').map(Number);
-                alarmDate = new Date();
-                alarmDate.setHours(h, m, 0, 0);
-                if (alarmDate <= new Date()) alarmDate.setDate(alarmDate.getDate() + 1);
-            } else {
-                // Sleep Goal mode - set alarm for latest wake time
-                const wakeVal = document.getElementById('latest-wake').value;
-                const [h, m] = wakeVal.split(':').map(Number);
-                alarmDate = new Date();
-                alarmDate.setHours(h, m, 0, 0);
-                if (alarmDate <= new Date()) alarmDate.setDate(alarmDate.getDate() + 1);
+        // Read alarm from device
+        async function readDeviceAlarm() {
+            if (!cmdChar) return null;
+            try {
+                await cmdChar.writeValueWithoutResponse(getAlarmTime());
+                // Response will come via handleNotification
+            } catch (e) {
+                console.log('Failed to read alarm:', e);
             }
+        }
 
+        // Handle alarm response from device (type 36 = CommandResponse, cmd 67 = GetAlarmTime)
+        function handleAlarmResponse(data) {
+            if (data.length >= 5) {
+                const enabled = data[0];
+                const unix = data[1] | (data[2] << 8) | (data[3] << 16) | (data[4] << 24);
+                if (enabled && unix > 0) {
+                    deviceAlarm = new Date(unix * 1000);
+                    if (deviceAlarm > new Date()) {
+                        currentAlarm = deviceAlarm;
+                        alarmEnabled = true;
+                        document.getElementById('alarm-toggle').classList.add('active');
+                        updateAlarmStatus(deviceAlarm, true);
+                    } else {
+                        deviceAlarm = null;
+                    }
+                } else {
+                    deviceAlarm = null;
+                }
+            }
+        }
+
+        // Modal functions
+        function showConfirmModal(existingAlarm, newAlarm) {
+            pendingAlarmDate = newAlarm;
+            document.getElementById('existing-alarm-time').textContent =
+                existingAlarm.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }) +
+                ' on ' + dayAbbrev[existingAlarm.getDay()];
+            document.getElementById('confirm-modal').classList.remove('hidden');
+        }
+
+        function closeModal() {
+            document.getElementById('confirm-modal').classList.add('hidden');
+            pendingAlarmDate = null;
+        }
+
+        async function confirmSetAlarm() {
+            closeModal();
+            if (pendingAlarmDate) {
+                await doSetAlarm(pendingAlarmDate);
+            }
+        }
+
+        async function doSetAlarm(alarmDate) {
             try {
                 await cmdChar.writeValueWithoutResponse(setAlarmTime(Math.floor(alarmDate.getTime() / 1000)));
                 currentAlarm = alarmDate;
+                deviceAlarm = alarmDate;
                 alarmEnabled = true;
                 document.getElementById('alarm-toggle').classList.add('active');
                 updateAlarmStatus(alarmDate);
@@ -1131,19 +1387,81 @@
             }
         }
 
+        async function setAlarm() {
+            if (!cmdChar) return showError('Not connected');
+
+            let alarmDate;
+
+            if (alarmMode === 'exact' || alarmMode === 'schedule') {
+                const timeVal = document.getElementById('alarm-time').value;
+                const [h, m] = timeVal.split(':').map(Number);
+
+                // Save to weekly schedule
+                weeklySchedule[selectedDay] = timeVal;
+                updateDayButtons();
+                saveToStorage();
+
+                // Calculate the next occurrence of this day/time
+                alarmDate = getNextOccurrence(selectedDay, h, m);
+            } else {
+                // Sleep Goal mode - set alarm for latest wake time
+                const wakeVal = document.getElementById('latest-wake').value;
+                const [h, m] = wakeVal.split(':').map(Number);
+                alarmDate = new Date();
+                alarmDate.setHours(h, m, 0, 0);
+                if (alarmDate <= new Date()) alarmDate.setDate(alarmDate.getDate() + 1);
+            }
+
+            // Check if device has an existing alarm
+            if (deviceAlarm && deviceAlarm > new Date()) {
+                showConfirmModal(deviceAlarm, alarmDate);
+            } else {
+                await doSetAlarm(alarmDate);
+            }
+        }
+
+        function getNextOccurrence(dayOfWeek, hours, minutes) {
+            const now = new Date();
+            const result = new Date();
+            result.setHours(hours, minutes, 0, 0);
+
+            // Calculate days until target day
+            let daysUntil = dayOfWeek - now.getDay();
+            if (daysUntil < 0) daysUntil += 7;
+            if (daysUntil === 0 && result <= now) daysUntil = 7;
+
+            result.setDate(result.getDate() + daysUntil);
+            return result;
+        }
+
+        // Get next scheduled alarm based on weekly schedule
+        function getNextScheduledAlarm() {
+            const now = new Date();
+            let nextAlarm = null;
+
+            for (let i = 0; i < 7; i++) {
+                const day = (now.getDay() + i) % 7;
+                if (weeklySchedule[day]) {
+                    const [h, m] = weeklySchedule[day].split(':').map(Number);
+                    const candidate = getNextOccurrence(day, h, m);
+                    if (!nextAlarm || candidate < nextAlarm) {
+                        nextAlarm = candidate;
+                    }
+                }
+            }
+            return nextAlarm;
+        }
+
         async function quickAlarm(mins) {
             if (!cmdChar) return showError('Not connected');
 
             const alarm = new Date(Date.now() + mins * 60000);
-            try {
-                await cmdChar.writeValueWithoutResponse(setAlarmTime(Math.floor(alarm.getTime() / 1000)));
-                currentAlarm = alarm;
-                alarmEnabled = true;
-                document.getElementById('alarm-toggle').classList.add('active');
-                updateAlarmStatus(alarm);
-                saveToStorage();
-            } catch (e) {
-                showError('Failed to set timer');
+
+            // Check if device has an existing alarm
+            if (deviceAlarm && deviceAlarm > new Date()) {
+                showConfirmModal(deviceAlarm, alarm);
+            } else {
+                await doSetAlarm(alarm);
             }
         }
 
@@ -1160,6 +1478,8 @@
         document.addEventListener('DOMContentLoaded', () => {
             updateTimeDisplay();
             updateSleepCalc();
+            selectDay(new Date().getDay());
+            updateDayButtons();
         });
 
         // Storage
@@ -1169,7 +1489,8 @@
                 lowestReadings,
                 minBpm, maxBpm, totalBpm,
                 sessionStart,
-                alarm: currentAlarm?.toISOString()
+                alarm: currentAlarm?.toISOString(),
+                weeklySchedule
             }));
         }
 
@@ -1181,7 +1502,13 @@
                     if (alarm > new Date()) {
                         currentAlarm = alarm;
                         alarmEnabled = true;
+                        updateAlarmStatus(alarm);
+                        document.getElementById('alarm-toggle').classList.add('active');
                     }
+                }
+                if (data.weeklySchedule) {
+                    weeklySchedule = data.weeklySchedule;
+                    updateDayButtons();
                 }
             } catch (e) {}
         }
