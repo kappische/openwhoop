@@ -1139,7 +1139,8 @@
             DOUBLE_TAP: 14,
             TEMPERATURE_LEVEL: 17,
             RAW_DATA_ON: 46,
-            RAW_DATA_OFF: 47
+            RAW_DATA_OFF: 47,
+            EXTENDED_BATTERY_INFO: 63
         };
 
         // Command Numbers
@@ -1937,6 +1938,10 @@
                 debug('Raw data collection disabled on device');
                 sensorData.rawDataEnabled = false;
             }
+            // Extended Battery Info event (63) - most reliable battery source
+            else if (eventNum === EVENT_NUMBER.EXTENDED_BATTERY_INFO) {
+                handleExtendedBatteryEvent(data);
+            }
         }
 
         // Handle battery event (EVENT #3)
@@ -1959,12 +1964,44 @@
                 }
             }
 
-            // Fallback: search from byte 4 onwards
+            // Fallback: search from byte 4 onwards (but don't update - EVENT #63 is more reliable)
+            for (let i = 4; i < data.length; i++) {
+                if (data[i] > 0 && data[i] <= 100) {
+                    debug(`Battery level from event #3 (ignored): ${data[i]}% (offset ${i}) - waiting for EVENT #63`);
+                    return;
+                }
+            }
+        }
+
+        // Handle Extended Battery Info event (EVENT #63) - most reliable battery source
+        function handleExtendedBatteryEvent(data) {
+            const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            const decimal = Array.from(data).map((b, i) => `[${i}]=${b}`).join(' ');
+            debug(`Extended Battery event hex: ${hex}`);
+            debug(`Extended Battery event dec: ${decimal}`);
+
+            // Structure: [timestamp (4 bytes), ...battery data]
+            // Based on observation: byte 7 (0x1c = 28) seems close to actual battery (30%)
+            // Try byte 7 first, then search for reasonable values
+
+            if (data.length >= 8) {
+                const byte7 = data[7];
+                debug(`Extended Battery byte 7: ${byte7}`);
+                if (byte7 > 0 && byte7 <= 100) {
+                    deviceStatus.batteryLevel = byte7;
+                    deviceStatus.lastBatteryUpdate = Date.now();
+                    debug(`Battery level from EVENT #63 byte 7: ${byte7}%`);
+                    updateBatteryUI();
+                    return;
+                }
+            }
+
+            // Fallback: search after timestamp (byte 4+) for valid percentage
             for (let i = 4; i < data.length; i++) {
                 if (data[i] > 0 && data[i] <= 100) {
                     deviceStatus.batteryLevel = data[i];
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery level from event (fallback): ${data[i]}% (offset ${i})`);
+                    debug(`Battery level from EVENT #63 (fallback): ${data[i]}% (offset ${i})`);
                     updateBatteryUI();
                     return;
                 }
@@ -2012,9 +2049,16 @@
             }
 
             if (batteryLevel !== null) {
-                deviceStatus.batteryLevel = batteryLevel;
-                deviceStatus.lastBatteryUpdate = Date.now();
-                updateBatteryUI();
+                // Only update from command response if no recent EVENT #63 update
+                const timeSinceUpdate = Date.now() - deviceStatus.lastBatteryUpdate;
+                if (timeSinceUpdate > 10000 || deviceStatus.batteryLevel === null) {
+                    deviceStatus.batteryLevel = batteryLevel;
+                    deviceStatus.lastBatteryUpdate = Date.now();
+                    debug(`Battery set from cmd ${cmd}: ${batteryLevel}%`);
+                    updateBatteryUI();
+                } else {
+                    debug(`Battery from cmd ${cmd}: ${batteryLevel}% (ignored - recent EVENT #63 update)`);
+                }
             } else {
                 debug('Could not parse battery level from response');
             }
