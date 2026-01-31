@@ -1451,26 +1451,39 @@
             let restingRR = [];
             let activityCounts = {};
 
+            // Track nighttime data (10pm-8am) as sleep proxy
+            let nighttimeBPMs = [];
+            let nighttimeRR = [];
+
             // Also track sleep-specific data
             let sleepStart = null;
             let sleepEnd = null;
             let sleepReadings = [];
             let sleepRR = [];
 
-            // Look for data in the last 24 hours
-            const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+            // Look for data in the last 48 hours (to capture sleep data)
+            const twoDaysAgo = Date.now() - 48 * 60 * 60 * 1000;
 
             for (const reading of historicalData) {
-                if (reading.time.getTime() < oneDayAgo) continue;
+                if (reading.time.getTime() < twoDaysAgo) continue;
 
                 // Debug activity distribution (first time only)
                 if (!sleepData.activityDebugDone) {
                     activityCounts[reading.activityType] = (activityCounts[reading.activityType] || 0) + 1;
                 }
 
+                // Check if this reading is during typical sleep hours (10pm - 8am)
+                const hour = reading.time.getHours();
+                const isNighttime = hour >= 22 || hour < 8;
+
                 // Collect all valid data
                 if (reading.bpm > 30 && reading.bpm < 200) {
                     allBPMs.push(reading.bpm);
+
+                    // Track nighttime readings (likely sleep/rest)
+                    if (isNighttime) {
+                        nighttimeBPMs.push(reading.bpm);
+                    }
 
                     // Also track low-activity (resting) readings for RHR fallback
                     if (reading.activityType === 'inactive' || reading.activityType === 'sleep') {
@@ -1482,13 +1495,20 @@
                     const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
                     allRR.push(...validRR);
 
+                    if (isNighttime) {
+                        nighttimeRR.push(...validRR);
+                    }
+
                     if (reading.activityType === 'inactive' || reading.activityType === 'sleep') {
                         restingRR.push(...validRR);
                     }
                 }
 
-                // Track sleep periods
-                if (reading.activityType === 'sleep') {
+                // Track sleep periods (by activity type or nighttime with low HR)
+                const isSleepActivity = reading.activityType === 'sleep';
+                const isLikelySleep = isNighttime && reading.bpm < 80; // Nighttime + low HR
+
+                if (isSleepActivity || isLikelySleep) {
                     if (!sleepStart) {
                         sleepStart = reading.time;
                     }
@@ -1498,7 +1518,7 @@
                         const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
                         sleepRR.push(...validRR);
                     }
-                } else if (sleepStart && reading.activityType === 'awake') {
+                } else if (sleepStart && (reading.activityType === 'awake' || !isNighttime)) {
                     // Sleep period ended - if it was long enough, keep it
                     if (sleepReadings.length < 30) {
                         // Too short, reset and look for longer period
@@ -1515,18 +1535,22 @@
                 sleepData.activityDebugDone = true;
             }
 
-            debug(`Historical data: ${allBPMs.length} BPM, ${restingBPMs.length} resting BPM, ${allRR.length} RR, ${restingRR.length} resting RR`);
+            debug(`Historical: ${allBPMs.length} BPM, nighttime: ${nighttimeBPMs.length}, sleep: ${sleepReadings.length}, resting: ${restingBPMs.length}`);
 
             // Determine which data to use for metrics
-            // Priority: sleep data > resting data > all data
+            // Priority: sleep data > nighttime data > resting data > all data
             let useSleepData = sleepReadings.length >= 30;
-            let useRestingData = !useSleepData && restingBPMs.length >= 10;
-            let metricsSource = useSleepData ? 'sleep' : useRestingData ? 'resting' : 'historical';
+            let useNighttimeData = !useSleepData && nighttimeBPMs.length >= 10;
+            let useRestingData = !useSleepData && !useNighttimeData && restingBPMs.length >= 10;
+            let metricsSource = useSleepData ? 'sleep' : useNighttimeData ? 'nighttime' : useRestingData ? 'resting' : 'historical';
 
             let bpmsToUse, rrToUse;
             if (useSleepData) {
                 bpmsToUse = sleepReadings.map(r => r.bpm).filter(b => b > 30 && b < 200);
                 rrToUse = sleepRR;
+            } else if (useNighttimeData) {
+                bpmsToUse = nighttimeBPMs;
+                rrToUse = nighttimeRR;
             } else if (useRestingData) {
                 bpmsToUse = restingBPMs;
                 rrToUse = restingRR;
@@ -1549,10 +1573,12 @@
                 // Sleep score (based on 8 hours ideal)
                 const idealSleep = 8 * 60 * 60 * 1000;
                 sleepMetrics.sleepScore = Math.min(100, Math.round((durationMs / idealSleep) * 100));
+            } else if (useNighttimeData) {
+                debug(`Using nighttime data (10pm-8am): ${nighttimeBPMs.length} readings, ${nighttimeRR.length} RR intervals`);
             } else if (useRestingData) {
-                debug(`No sleep detected, using ${restingBPMs.length} resting readings (inactive/sleep periods)`);
+                debug(`No sleep/nighttime data, using ${restingBPMs.length} resting readings`);
             } else {
-                debug(`No sleep/resting data, using all ${allBPMs.length} historical readings (may include active periods)`);
+                debug(`No sleep/nighttime/resting data, using all ${allBPMs.length} readings (may include active)`);
             }
 
             sleepData.calculated = true;
@@ -2050,28 +2076,47 @@
             debug(`Extended Battery event hex: ${hex}`);
             debug(`Extended Battery event dec: ${decimal}`);
 
-            // Structure: [timestamp (4 bytes), ...battery data]
-            // Based on observation: byte 7 (0x1c = 28) seems close to actual battery (30%)
-            // Try byte 7 first, then search for reasonable values
+            // Show all potential battery values for debugging
+            const candidates = [];
+            for (let i = 4; i < Math.min(data.length, 20); i++) {
+                if (data[i] > 0 && data[i] <= 100) {
+                    candidates.push(`[${i}]=${data[i]}`);
+                }
+            }
+            debug(`Battery candidates: ${candidates.join(', ')}`);
 
+            // Try to calculate from voltage if present (bytes 14-15 might be voltage in mV)
+            if (data.length >= 16) {
+                const voltage = data[14] | (data[15] << 8);
+                if (voltage > 3000 && voltage < 4300) {
+                    // LiPo: 3.0V = 0%, 4.2V = 100%
+                    const pct = Math.round(((voltage - 3000) / 1200) * 100);
+                    debug(`Voltage-based battery: ${voltage}mV = ${pct}%`);
+                }
+            }
+
+            // Use byte 7 as primary (closest in testing)
+            // But also check if byte 6 minus some offset works better
             if (data.length >= 8) {
+                const byte6 = data[6];
                 const byte7 = data[7];
-                debug(`Extended Battery byte 7: ${byte7}`);
+
+                // Byte 7 seems to be the direct percentage value
                 if (byte7 > 0 && byte7 <= 100) {
                     deviceStatus.batteryLevel = byte7;
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery level from EVENT #63 byte 7: ${byte7}%`);
+                    debug(`Battery from EVENT #63: ${byte7}% (byte7=${byte7}, byte6=${byte6})`);
                     updateBatteryUI();
                     return;
                 }
             }
 
-            // Fallback: search after timestamp (byte 4+) for valid percentage
+            // Fallback: first valid percentage after timestamp
             for (let i = 4; i < data.length; i++) {
                 if (data[i] > 0 && data[i] <= 100) {
                     deviceStatus.batteryLevel = data[i];
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery level from EVENT #63 (fallback): ${data[i]}% (offset ${i})`);
+                    debug(`Battery from EVENT #63 (fallback): ${data[i]}% (offset ${i})`);
                     updateBatteryUI();
                     return;
                 }
