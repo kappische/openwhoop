@@ -1681,9 +1681,12 @@
                 await cmdChar.writeValueWithoutResponse(getAlarmTime());
                 await sleep(100);
 
-                // Get battery level
+                // Get battery level (try both commands)
                 debug('Requesting battery level...');
                 await cmdChar.writeValueWithoutResponse(getBatteryLevel());
+                await sleep(100);
+                debug('Requesting extended battery info...');
+                await cmdChar.writeValueWithoutResponse(getExtendedBatteryInfo());
 
                 // Try to enable optical data for SpO2 readings
                 await sleep(200);
@@ -1862,8 +1865,8 @@
                 if (packet.cmd === 67) {
                     handleAlarmResponse(packet.data);
                 }
-                // Battery level response
-                if (packet.cmd === CMD.GET_BATTERY_LEVEL) {
+                // Battery level response (cmd 26 or 98)
+                if (packet.cmd === CMD.GET_BATTERY_LEVEL || packet.cmd === CMD.GET_EXTENDED_BATTERY) {
                     handleBatteryResponse(packet.data);
                 }
                 // Log optical data response
@@ -1936,40 +1939,42 @@
             }
         }
 
-        // Handle battery event
+        // Handle battery event (EVENT #3)
         function handleBatteryEvent(data) {
-            if (data.length < 5) return;
-            // Battery event structure: timestamp (4 bytes) + battery level (1 byte)
-            const batteryLevel = data[4];
-            if (batteryLevel >= 0 && batteryLevel <= 100) {
-                deviceStatus.batteryLevel = batteryLevel;
-                deviceStatus.lastBatteryUpdate = Date.now();
-                debug(`Battery level: ${batteryLevel}%`);
-                updateBatteryUI();
+            const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            debug(`Battery event raw: ${hex}`);
+
+            // Try different offsets to find battery level
+            for (let i = 0; i < data.length; i++) {
+                if (data[i] > 0 && data[i] <= 100) {
+                    deviceStatus.batteryLevel = data[i];
+                    deviceStatus.lastBatteryUpdate = Date.now();
+                    debug(`Battery level from event: ${data[i]}% (offset ${i})`);
+                    updateBatteryUI();
+                    return;
+                }
             }
         }
 
-        // Handle battery level command response
+        // Handle battery level command response (cmd 26 or 98)
         function handleBatteryResponse(data) {
             const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            debug(`Battery response raw: ${hex}`);
+            debug(`Battery cmd response: ${hex}`);
 
-            if (data.length >= 1) {
-                // Battery level is typically first byte after status
-                let batteryLevel = data[0];
-
-                // Some responses have status byte first, battery second
-                if (data.length >= 2 && data[0] === 0 && data[1] <= 100) {
-                    batteryLevel = data[1];
-                }
-
-                if (batteryLevel > 0 && batteryLevel <= 100) {
-                    deviceStatus.batteryLevel = batteryLevel;
+            // Try to find battery percentage in response
+            // Extended battery info (cmd 98) may have more data
+            for (let i = 0; i < Math.min(data.length, 10); i++) {
+                const val = data[i];
+                // Battery percentage should be 1-100 (not 0, not > 100)
+                if (val > 0 && val <= 100) {
+                    deviceStatus.batteryLevel = val;
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery level: ${batteryLevel}%`);
+                    debug(`Battery level: ${val}% (offset ${i})`);
                     updateBatteryUI();
+                    return;
                 }
             }
+            debug('Could not parse battery level from response');
         }
 
         // Update battery UI
