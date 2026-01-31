@@ -1742,26 +1742,69 @@
 
         const sleep = ms => new Promise(r => setTimeout(r, ms));
 
+        // Packet reassembly buffer (BLE fragments large packets)
+        let packetBuffer = new Uint8Array(0);
+
         function handleNotification(event) {
             const data = new Uint8Array(event.target.value.buffer);
             packetCount++;
 
-            // Log raw data for first few packets
-            if (packetCount <= 10) {
-                const hex = Array.from(data.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                debug(`Raw[${packetCount}]: ${hex}...`);
-            }
+            // Append incoming data to buffer
+            const newBuffer = new Uint8Array(packetBuffer.length + data.length);
+            newBuffer.set(packetBuffer);
+            newBuffer.set(data, packetBuffer.length);
+            packetBuffer = newBuffer;
 
-            const packet = parsePacket(data);
-            if (!packet) {
-                debug(`Packet ${packetCount}: INVALID (no 0xAA or CRC fail)`);
-                return;
-            }
+            // Try to parse complete packets from buffer
+            while (packetBuffer.length >= 4) {
+                // Look for start of frame (0xAA)
+                if (packetBuffer[0] !== 0xAA) {
+                    // Find next 0xAA or discard buffer
+                    let found = false;
+                    for (let i = 1; i < packetBuffer.length; i++) {
+                        if (packetBuffer[i] === 0xAA) {
+                            packetBuffer = packetBuffer.slice(i);
+                            found = true;
+                            break;
+                        }
+                    }
+                    if (!found) {
+                        packetBuffer = new Uint8Array(0);
+                        return;
+                    }
+                }
 
-            // Only log every 10th packet after initial debugging
-            if (packetCount <= 10 || packetCount % 10 === 0) {
-                debug(`Pkt#${packetCount} type=${packet.type} cmd=${packet.cmd} len=${packet.data.length}`);
+                // Check if we have enough bytes to read length
+                if (packetBuffer.length < 4) return;
+
+                // Get packet length
+                const len = packetBuffer[1] | (packetBuffer[2] << 8);
+                const totalLen = 4 + len; // SOF + len(2) + crc8 + payload + crc32
+
+                // Wait for complete packet
+                if (packetBuffer.length < totalLen) return;
+
+                // Extract complete packet
+                const packetData = packetBuffer.slice(0, totalLen);
+                packetBuffer = packetBuffer.slice(totalLen);
+
+                // Parse the packet
+                const packet = parsePacket(packetData);
+                if (!packet) {
+                    // Don't log every invalid - too noisy
+                    continue;
+                }
+
+                // Only log every 100th packet after initial debugging
+                if (packetCount <= 10 || packetCount % 100 === 0) {
+                    debug(`Pkt#${packetCount} type=${packet.type} cmd=${packet.cmd} len=${packet.data.length}`);
+                }
+
+                processPacket(packet);
             }
+        }
+
+        function processPacket(packet) {
 
             // Heart rate packets - Historical (type 47)
             if (packet.type === 47 && packet.data.length >= 15) {
