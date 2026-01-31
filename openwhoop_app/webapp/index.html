@@ -1375,8 +1375,9 @@
 
             // Debug first few readings to verify parsing
             if (historicalData.length < 5) {
-                const rawBytes = Array.from(data.slice(14, 24)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                debug(`Historical #${historicalData.length}: unix=${unix} bpm=${bpm} rrCount=${rrCount} rr=[${rr.join(',')}] raw[14-23]=${rawBytes}`);
+                const rawBytes = Array.from(data.slice(14, 28)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                const actType = getActivityType(activity);
+                debug(`Historical #${historicalData.length}: unix=${unix} bpm=${bpm} rrCount=${rrCount} activity=${activity} (${actType}) raw[14-27]=${rawBytes}`);
             }
 
             return {
@@ -1731,10 +1732,9 @@
                 await cmdChar.writeValueWithoutResponse(setClock());
                 await sleep(100);
 
-                // Request historical data from last 24 hours for sleep analysis
-                const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
+                // Request all historical data (like Rust implementation - send 0x00)
                 debug('Requesting historical data for sleep analysis...');
-                await cmdChar.writeValueWithoutResponse(requestHistoricalData(oneDayAgo));
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, 22, [0x00]));
                 await sleep(500); // Give time for historical data to arrive
 
                 debug('Sending enterHighFreqSync...');
