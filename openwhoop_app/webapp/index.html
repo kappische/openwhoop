@@ -1761,12 +1761,15 @@
 
                 // Request historical data from last 48 hours for sleep analysis
                 const twoDaysAgo = Math.floor((Date.now() - 48 * 60 * 60 * 1000) / 1000);
-                debug('Requesting historical data (48h) for sleep analysis...');
-                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, 22, [
+                const twoDaysAgoDate = new Date(twoDaysAgo * 1000);
+                debug(`Requesting historical data since: ${twoDaysAgoDate.toISOString()} (unix=${twoDaysAgo})`);
+                const histPacket = createPacket(35, 0, 22, [
                     twoDaysAgo & 0xFF, (twoDaysAgo >> 8) & 0xFF,
                     (twoDaysAgo >> 16) & 0xFF, (twoDaysAgo >> 24) & 0xFF
-                ]));
-                await sleep(500); // Give time for historical data to arrive
+                ]);
+                debug(`Historical data request packet: ${Array.from(histPacket).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+                await cmdChar.writeValueWithoutResponse(histPacket);
+                await sleep(1000); // Give time for historical data to arrive
 
                 debug('Sending enterHighFreqSync...');
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
@@ -1810,14 +1813,25 @@
                 debug('All commands sent, waiting for data...');
 
                 // Process sleep data after a delay to allow historical packets to arrive
+                // Increased to 15 seconds since historical data can take time
                 setTimeout(() => {
+                    // Log packet type summary for debugging
+                    if (window.packetTypeCounts) {
+                        const summary = Object.entries(window.packetTypeCounts)
+                            .map(([type, count]) => `${type}:${count}`)
+                            .join(' ');
+                        debug(`Packet types received: ${summary}`);
+                    }
+
                     if (historicalData.length > 0) {
                         debug(`Processing ${historicalData.length} historical readings...`);
                         processSleepData();
                     } else {
-                        debug('No historical data received, using real-time estimates');
+                        debug('No historical data received after 15s, using real-time estimates');
+                        debug('This may mean the device has no recent sleep data stored');
+                        debug('Expected type 47 packets - check if device has historical data');
                     }
-                }, 3000);
+                }, 15000);
 
                 document.getElementById('status-dot').classList.add('connected');
                 document.getElementById('status-text').textContent = ''; // Just show green dot when connected
@@ -1916,9 +1930,19 @@
                     continue;
                 }
 
-                // Only log every 100th packet after initial debugging
+                // Log first 10 packets and every 100th thereafter
                 if (packetCount <= 10 || packetCount % 100 === 0) {
                     debug(`Pkt#${packetCount} type=${packet.type} cmd=${packet.cmd} len=${packet.data.length}`);
+                }
+
+                // Track packet type counts for debugging
+                if (!window.packetTypeCounts) window.packetTypeCounts = {};
+                window.packetTypeCounts[packet.type] = (window.packetTypeCounts[packet.type] || 0) + 1;
+
+                // Log first historical packets (type 47) specifically
+                if (packet.type === 47 && window.packetTypeCounts[47] <= 5) {
+                    const hex = Array.from(packet.data.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                    debug(`HISTORICAL pkt #${window.packetTypeCounts[47]} (type 47): len=${packet.data.length} hex=${hex}`);
                 }
 
                 processPacket(packet);
@@ -1959,6 +1983,16 @@
             else if (packet.type === 36) {
                 const hex = Array.from(packet.data.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ');
                 debug(`Cmd response #${packet.cmd}: ${hex}`);
+
+                // SendHistoricalData (cmd 22) response - indicates if historical data is coming
+                if (packet.cmd === 22) {
+                    const status = packet.data[0];
+                    debug(`Historical data response: status=${status} (0=success, other=error)`);
+                    if (status !== 0) {
+                        debug('Device may not have historical data for requested timeframe');
+                    }
+                }
+
                 if (packet.cmd === 67) {
                     handleAlarmResponse(packet.data);
                 }
@@ -2095,15 +2129,19 @@
                 }
             }
 
-            // Use byte 13 as primary (testing showed: byte13=42 when official=45%, much better than byte7=28)
-            if (data.length >= 14) {
-                const byte13 = data[13];
+            // Battery percentage appears to be byte 6 divided by 2
+            // Testing: byte6=94, official=49%, and 94/2=47 ≈ 49%
+            if (data.length >= 8) {
+                const byte6 = data[6];
                 const byte7 = data[7];
 
-                if (byte13 > 0 && byte13 <= 100) {
-                    deviceStatus.batteryLevel = byte13;
+                // Byte 6 divided by 2 seems to match official app
+                const batteryPct = Math.round(byte6 / 2);
+
+                if (batteryPct > 0 && batteryPct <= 100) {
+                    deviceStatus.batteryLevel = batteryPct;
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery from EVENT #63: ${byte13}% (byte13=${byte13}, byte7=${byte7})`);
+                    debug(`Battery from EVENT #63: ${batteryPct}% (byte6=${byte6}/2, byte7=${byte7})`);
                     updateBatteryUI();
                     return;
                 }
@@ -2112,9 +2150,10 @@
             // Fallback: first valid percentage after timestamp
             for (let i = 4; i < data.length; i++) {
                 if (data[i] > 0 && data[i] <= 100) {
-                    deviceStatus.batteryLevel = data[i];
+                    const pct = data[i];
+                    deviceStatus.batteryLevel = pct;
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery from EVENT #63 (fallback): ${data[i]}% (offset ${i})`);
+                    debug(`Battery from EVENT #63 (fallback): ${pct}% (offset ${i})`);
                     updateBatteryUI();
                     return;
                 }
