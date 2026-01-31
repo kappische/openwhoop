@@ -1867,7 +1867,7 @@
                 }
                 // Battery level response (cmd 26 or 98)
                 if (packet.cmd === CMD.GET_BATTERY_LEVEL || packet.cmd === CMD.GET_EXTENDED_BATTERY) {
-                    handleBatteryResponse(packet.data);
+                    handleBatteryResponse(packet.data, packet.cmd);
                 }
                 // Log optical data response
                 if (packet.cmd === CMD.ENABLE_OPTICAL_DATA || packet.cmd === CMD.START_RAW_DATA) {
@@ -1942,14 +1942,29 @@
         // Handle battery event (EVENT #3)
         function handleBatteryEvent(data) {
             const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            debug(`Battery event raw: ${hex}`);
+            const decimal = Array.from(data).map((b, i) => `[${i}]=${b}`).join(' ');
+            debug(`Battery event hex: ${hex}`);
+            debug(`Battery event dec: ${decimal}`);
 
-            // Try different offsets to find battery level
-            for (let i = 0; i < data.length; i++) {
+            // Event structure: [timestamp (4 bytes), battery_level, ...]
+            // Skip the 4-byte timestamp, battery level is at byte 4
+            if (data.length >= 5) {
+                const level = data[4];
+                if (level > 0 && level <= 100) {
+                    deviceStatus.batteryLevel = level;
+                    deviceStatus.lastBatteryUpdate = Date.now();
+                    debug(`Battery level from event: ${level}%`);
+                    updateBatteryUI();
+                    return;
+                }
+            }
+
+            // Fallback: search from byte 4 onwards
+            for (let i = 4; i < data.length; i++) {
                 if (data[i] > 0 && data[i] <= 100) {
                     deviceStatus.batteryLevel = data[i];
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery level from event: ${data[i]}% (offset ${i})`);
+                    debug(`Battery level from event (fallback): ${data[i]}% (offset ${i})`);
                     updateBatteryUI();
                     return;
                 }
@@ -1957,24 +1972,52 @@
         }
 
         // Handle battery level command response (cmd 26 or 98)
-        function handleBatteryResponse(data) {
+        function handleBatteryResponse(data, cmd) {
             const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            debug(`Battery cmd response: ${hex}`);
+            const decimal = Array.from(data).map((b, i) => `[${i}]=${b}`).join(' ');
+            debug(`Battery cmd ${cmd} response hex: ${hex}`);
+            debug(`Battery cmd ${cmd} response dec: ${decimal}`);
 
-            // Try to find battery percentage in response
-            // Extended battery info (cmd 98) may have more data
-            for (let i = 0; i < Math.min(data.length, 10); i++) {
-                const val = data[i];
-                // Battery percentage should be 1-100 (not 0, not > 100)
-                if (val > 0 && val <= 100) {
-                    deviceStatus.batteryLevel = val;
-                    deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery level: ${val}% (offset ${i})`);
-                    updateBatteryUI();
-                    return;
+            let batteryLevel = null;
+
+            // GetBatteryLevel (26): Response format [status, battery_level]
+            // Byte 0 is status (0=success), byte 1 is battery percentage
+            if (cmd === CMD.GET_BATTERY_LEVEL) {
+                if (data.length >= 2) {
+                    // Try byte 1 first (after status byte)
+                    if (data[1] > 0 && data[1] <= 100) {
+                        batteryLevel = data[1];
+                        debug(`Battery from cmd 26 byte 1: ${batteryLevel}%`);
+                    }
+                    // If byte 1 is 0 or invalid, try byte 0 (some devices may not have status)
+                    else if (data[0] > 0 && data[0] <= 100) {
+                        batteryLevel = data[0];
+                        debug(`Battery from cmd 26 byte 0: ${batteryLevel}%`);
+                    }
                 }
             }
-            debug('Could not parse battery level from response');
+            // GetExtendedBatteryInfo (98): More complex response with voltage, current, etc.
+            // Try known offsets for extended battery info
+            else if (cmd === CMD.GET_EXTENDED_BATTERY) {
+                // Try several known positions where battery % might be
+                // Extended format varies, try: byte 1, byte 2, or last valid byte
+                const tryOffsets = [1, 2, 3, 4, 5];
+                for (const offset of tryOffsets) {
+                    if (offset < data.length && data[offset] > 0 && data[offset] <= 100) {
+                        batteryLevel = data[offset];
+                        debug(`Battery from cmd 98 offset ${offset}: ${batteryLevel}%`);
+                        break;
+                    }
+                }
+            }
+
+            if (batteryLevel !== null) {
+                deviceStatus.batteryLevel = batteryLevel;
+                deviceStatus.lastBatteryUpdate = Date.now();
+                updateBatteryUI();
+            } else {
+                debug('Could not parse battery level from response');
+            }
         }
 
         // Update battery UI
