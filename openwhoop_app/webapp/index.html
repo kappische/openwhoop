@@ -1861,7 +1861,8 @@
             }
             // Command response (type 36)
             else if (packet.type === 36) {
-                debug(`Command response for cmd ${packet.cmd}`);
+                const hex = Array.from(packet.data.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                debug(`Cmd response #${packet.cmd}: ${hex}`);
                 if (packet.cmd === 67) {
                     handleAlarmResponse(packet.data);
                 }
@@ -1954,12 +1955,22 @@
 
         // Handle battery level command response
         function handleBatteryResponse(data) {
+            const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            debug(`Battery response raw: ${hex}`);
+
             if (data.length >= 1) {
-                const batteryLevel = data[0];
-                if (batteryLevel >= 0 && batteryLevel <= 100) {
+                // Battery level is typically first byte after status
+                let batteryLevel = data[0];
+
+                // Some responses have status byte first, battery second
+                if (data.length >= 2 && data[0] === 0 && data[1] <= 100) {
+                    batteryLevel = data[1];
+                }
+
+                if (batteryLevel > 0 && batteryLevel <= 100) {
                     deviceStatus.batteryLevel = batteryLevel;
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery level (cmd): ${batteryLevel}%`);
+                    debug(`Battery level: ${batteryLevel}%`);
                     updateBatteryUI();
                 }
             }
