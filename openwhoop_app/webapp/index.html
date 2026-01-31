@@ -63,6 +63,27 @@
         }
         .status-dot.connected { background: var(--green); }
 
+        .battery-status {
+            display: none;
+            align-items: center;
+            gap: 3px;
+            font-size: 11px;
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: var(--card-light);
+        }
+        .battery-status.visible { display: flex; }
+        .battery-status.charging { color: var(--green); }
+        .battery-status.low { color: var(--red); }
+
+        .wrist-status {
+            display: none;
+            font-size: 12px;
+            padding: 2px 4px;
+        }
+        .wrist-status.visible { display: inline; }
+        .wrist-status.off-wrist { color: var(--yellow); }
+
         /* Connect Screen */
         .connect-screen {
             display: flex;
@@ -791,6 +812,8 @@
     <div class="header">
         <div class="header-title" onclick="toggleDebug()" style="cursor:pointer;">WHOOP</div>
         <div class="header-status">
+            <span class="wrist-status" id="wrist-status" title="Wrist status"></span>
+            <span class="battery-status" id="battery-status" title="Battery level"></span>
             <span class="status-dot" id="status-dot"></span>
             <span id="status-text">Disconnected</span>
         </div>
@@ -1115,6 +1138,12 @@
 
         // Event Numbers (from Whoop protocol)
         const EVENT_NUMBER = {
+            BATTERY_LEVEL: 3,
+            CHARGING_ON: 7,
+            CHARGING_OFF: 8,
+            WRIST_ON: 9,
+            WRIST_OFF: 10,
+            DOUBLE_TAP: 14,
             TEMPERATURE_LEVEL: 17,
             RAW_DATA_ON: 46,
             RAW_DATA_OFF: 47
@@ -1125,6 +1154,7 @@
             ENABLE_REALTIME_HR: 3,
             SET_CLOCK: 10,
             SEND_HISTORICAL: 22,
+            GET_BATTERY_LEVEL: 26,
             HELLO_HARVARD: 35,
             SET_ALARM: 66,
             GET_ALARM: 67,
@@ -1133,6 +1163,7 @@
             START_RAW_DATA: 81,
             STOP_RAW_DATA: 82,
             ENTER_HIGH_FREQ: 96,
+            GET_EXTENDED_BATTERY: 98,
             ENABLE_OPTICAL_DATA: 107,
             TOGGLE_OPTICAL_MODE: 108
         };
@@ -1178,6 +1209,14 @@
             lastTempUpdate: 0,          // Timestamp of last temp update
             lastSpO2Update: 0,          // Timestamp of last SpO2 update
             rawOpticalValues: []        // Raw optical sensor values
+        };
+
+        // Device status tracking
+        let deviceStatus = {
+            batteryLevel: null,         // Battery percentage (0-100)
+            isCharging: false,          // Whether device is charging
+            onWrist: true,              // Whether device is on wrist
+            lastBatteryUpdate: 0        // Timestamp of last battery update
         };
 
         // Activity thresholds (from Whoop protocol)
@@ -1298,6 +1337,10 @@
         // Start raw data stream (includes optical sensor data) - Command 81
         const startRawData = () => createPacket(35, 0, CMD.START_RAW_DATA, [0x01]);
         const stopRawData = () => createPacket(35, 0, CMD.STOP_RAW_DATA, [0x00]);
+
+        // Battery level commands
+        const getBatteryLevel = () => createPacket(35, 0, CMD.GET_BATTERY_LEVEL, []);
+        const getExtendedBatteryInfo = () => createPacket(35, 0, CMD.GET_EXTENDED_BATTERY, []);
 
         // Parse historical packet (type 47) - extracts timestamp, BPM, RR intervals, activity
         function parseHistoricalReading(data) {
@@ -1618,6 +1661,11 @@
                 await sleep(100);
                 debug('Sending getAlarmTime...');
                 await cmdChar.writeValueWithoutResponse(getAlarmTime());
+                await sleep(100);
+
+                // Get battery level
+                debug('Requesting battery level...');
+                await cmdChar.writeValueWithoutResponse(getBatteryLevel());
 
                 // Try to enable optical data for SpO2 readings
                 await sleep(200);
@@ -1659,6 +1707,21 @@
                 document.getElementById('main-app').classList.add('active');
                 document.getElementById('debug-console').classList.add('visible');
 
+                // Initialize wrist status as on-wrist (we just connected)
+                deviceStatus.onWrist = true;
+                updateWristUI();
+
+                // Set up periodic battery level refresh (every 5 minutes)
+                setInterval(async () => {
+                    if (cmdChar) {
+                        try {
+                            await cmdChar.writeValueWithoutResponse(getBatteryLevel());
+                        } catch (e) {
+                            debug('Battery refresh failed: ' + e.message);
+                        }
+                    }
+                }, 5 * 60 * 1000);
+
                 device.addEventListener('gattserverdisconnected', onDisconnect);
 
             } catch (e) {
@@ -1672,6 +1735,9 @@
         function onDisconnect() {
             document.getElementById('status-dot').classList.remove('connected');
             document.getElementById('status-text').textContent = 'Disconnected';
+            // Hide battery and wrist status
+            document.getElementById('battery-status').classList.remove('visible');
+            document.getElementById('wrist-status').classList.remove('visible');
         }
 
         const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1724,6 +1790,10 @@
                 if (packet.cmd === 67) {
                     handleAlarmResponse(packet.data);
                 }
+                // Battery level response
+                if (packet.cmd === CMD.GET_BATTERY_LEVEL) {
+                    handleBatteryResponse(packet.data);
+                }
                 // Log optical data response
                 if (packet.cmd === CMD.ENABLE_OPTICAL_DATA || packet.cmd === CMD.START_RAW_DATA) {
                     debug(`Optical/Raw data response: ${Array.from(packet.data).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
@@ -1748,8 +1818,39 @@
             const hex = Array.from(data.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ');
             debug(`EVENT #${eventNum}: ${hex}`);
 
+            // Battery Level event (3)
+            if (eventNum === EVENT_NUMBER.BATTERY_LEVEL) {
+                handleBatteryEvent(data);
+            }
+            // Charging events (7, 8)
+            else if (eventNum === EVENT_NUMBER.CHARGING_ON) {
+                debug('Charging started');
+                deviceStatus.isCharging = true;
+                updateBatteryUI();
+            }
+            else if (eventNum === EVENT_NUMBER.CHARGING_OFF) {
+                debug('Charging stopped');
+                deviceStatus.isCharging = false;
+                updateBatteryUI();
+            }
+            // Wrist detection events (9, 10)
+            else if (eventNum === EVENT_NUMBER.WRIST_ON) {
+                debug('Device placed on wrist');
+                deviceStatus.onWrist = true;
+                updateWristUI();
+            }
+            else if (eventNum === EVENT_NUMBER.WRIST_OFF) {
+                debug('Device removed from wrist');
+                deviceStatus.onWrist = false;
+                updateWristUI();
+            }
+            // Double tap event (14)
+            else if (eventNum === EVENT_NUMBER.DOUBLE_TAP) {
+                debug('Double tap detected!');
+                // Could trigger an action here
+            }
             // Temperature Level event (17)
-            if (eventNum === EVENT_NUMBER.TEMPERATURE_LEVEL) {
+            else if (eventNum === EVENT_NUMBER.TEMPERATURE_LEVEL) {
                 handleTemperatureEvent(data);
             }
             // Raw data collection events
@@ -1760,6 +1861,60 @@
             else if (eventNum === EVENT_NUMBER.RAW_DATA_OFF) {
                 debug('Raw data collection disabled on device');
                 sensorData.rawDataEnabled = false;
+            }
+        }
+
+        // Handle battery event
+        function handleBatteryEvent(data) {
+            if (data.length < 5) return;
+            // Battery event structure: timestamp (4 bytes) + battery level (1 byte)
+            const batteryLevel = data[4];
+            if (batteryLevel >= 0 && batteryLevel <= 100) {
+                deviceStatus.batteryLevel = batteryLevel;
+                deviceStatus.lastBatteryUpdate = Date.now();
+                debug(`Battery level: ${batteryLevel}%`);
+                updateBatteryUI();
+            }
+        }
+
+        // Handle battery level command response
+        function handleBatteryResponse(data) {
+            if (data.length >= 1) {
+                const batteryLevel = data[0];
+                if (batteryLevel >= 0 && batteryLevel <= 100) {
+                    deviceStatus.batteryLevel = batteryLevel;
+                    deviceStatus.lastBatteryUpdate = Date.now();
+                    debug(`Battery level (cmd): ${batteryLevel}%`);
+                    updateBatteryUI();
+                }
+            }
+        }
+
+        // Update battery UI
+        function updateBatteryUI() {
+            const batteryEl = document.getElementById('battery-status');
+            if (deviceStatus.batteryLevel !== null) {
+                const level = deviceStatus.batteryLevel;
+                const icon = deviceStatus.isCharging ? '⚡' : (level > 80 ? '🔋' : level > 20 ? '🔋' : '🪫');
+                batteryEl.textContent = `${icon} ${level}%`;
+                batteryEl.classList.add('visible');
+                batteryEl.classList.toggle('charging', deviceStatus.isCharging);
+                batteryEl.classList.toggle('low', level <= 20 && !deviceStatus.isCharging);
+            }
+        }
+
+        // Update wrist status UI
+        function updateWristUI() {
+            const wristEl = document.getElementById('wrist-status');
+            wristEl.classList.add('visible');
+            if (deviceStatus.onWrist) {
+                wristEl.textContent = '⌚';
+                wristEl.classList.remove('off-wrist');
+                wristEl.title = 'On wrist';
+            } else {
+                wristEl.textContent = '⌚❌';
+                wristEl.classList.add('off-wrist');
+                wristEl.title = 'Off wrist';
             }
         }
 
