@@ -1338,28 +1338,44 @@
 
         // Parse historical packet (type 47) - extracts timestamp, BPM, RR intervals, activity
         function parseHistoricalReading(data) {
-            if (data.length < 14) return null;
+            if (data.length < 16) return null;
 
-            // Packet structure based on Whoop protocol:
-            // Bytes 0-3: Unix timestamp
-            // Byte 4-7: Activity value (u32)
-            // Bytes 8-9: Unknown
-            // Byte 10: Number of RR intervals
-            // Bytes 11+: RR intervals (2 bytes each)
-            // Last byte before RR: BPM
+            // Packet structure from Whoop protocol (Rust implementation):
+            // Bytes 0-3: unknown
+            // Bytes 4-7: Unix timestamp (little endian)
+            // Bytes 8-13: unknown
+            // Byte 14: BPM
+            // Byte 15: RR interval count
+            // Bytes 16+: RR intervals (2 bytes each, up to 4)
+            // After RR: activity (4 bytes)
 
-            const unix = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
-            const activity = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
-            const bpm = data[14]; // BPM is at offset 14 based on our earlier debugging
+            const unix = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
+            const bpm = data[14];
+            const rrCount = data[15] || 0;
 
-            // Extract RR intervals if present
-            const rrCount = data[10] || 0;
+            // Extract RR intervals (up to 4, 2 bytes each)
             const rr = [];
-            for (let i = 0; i < rrCount && (11 + i * 2 + 1) < data.length; i++) {
-                const rrVal = data[11 + i * 2] | (data[11 + i * 2 + 1] << 8);
-                if (rrVal > 0 && rrVal < 2000) { // Valid RR interval (300-2000ms)
-                    rr.push(rrVal);
+            for (let i = 0; i < Math.min(rrCount, 4); i++) {
+                const offset = 16 + i * 2;
+                if (offset + 1 < data.length) {
+                    const rrVal = data[offset] | (data[offset + 1] << 8);
+                    if (rrVal > 200 && rrVal < 2000) { // Valid RR interval (200-2000ms)
+                        rr.push(rrVal);
+                    }
                 }
+            }
+
+            // Activity is after RR intervals
+            const activityOffset = 16 + 4 * 2; // After max 4 RR intervals
+            let activity = 0;
+            if (activityOffset + 3 < data.length) {
+                activity = data[activityOffset] | (data[activityOffset + 1] << 8) |
+                           (data[activityOffset + 2] << 16) | (data[activityOffset + 3] << 24);
+            }
+
+            // Debug first few readings to verify parsing
+            if (historicalData.length < 5) {
+                debug(`Historical reading: unix=${unix} bpm=${bpm} rr=[${rr.join(',')}] rrCount=${rrCount}`);
             }
 
             return {
