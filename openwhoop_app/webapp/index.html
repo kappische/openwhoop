@@ -64,15 +64,8 @@
         .status-dot.connected { background: var(--green); }
 
         .battery-status {
-            display: none;
-            align-items: center;
-            gap: 3px;
             font-size: 11px;
-            padding: 2px 6px;
-            border-radius: 4px;
-            background: var(--card-light);
         }
-        .battery-status.visible { display: flex; }
         .battery-status.charging { color: var(--green); }
         .battery-status.low { color: var(--red); }
 
@@ -813,7 +806,7 @@
         <div class="header-title" onclick="toggleDebug()" style="cursor:pointer;">WHOOP</div>
         <div class="header-status">
             <span class="wrist-status" id="wrist-status" title="Wrist status"></span>
-            <span class="battery-status" id="battery-status" title="Battery level"></span>
+            <span class="battery-status" id="battery-status" title="Battery level">--%</span>
             <span class="status-dot" id="status-dot"></span>
             <span id="status-text">Disconnected</span>
         </div>
@@ -1760,9 +1753,12 @@
         function onDisconnect() {
             document.getElementById('status-dot').classList.remove('connected');
             document.getElementById('status-text').textContent = 'Disconnected';
-            // Hide battery and wrist status
-            document.getElementById('battery-status').classList.remove('visible');
+            // Reset battery and hide wrist status
+            document.getElementById('battery-status').textContent = '--%';
+            document.getElementById('battery-status').classList.remove('charging', 'low');
             document.getElementById('wrist-status').classList.remove('visible');
+            deviceStatus.batteryLevel = null;
+            deviceStatus.isCharging = false;
         }
 
         const sleep = ms => new Promise(r => setTimeout(r, ms));
@@ -1983,7 +1979,6 @@
                 const level = deviceStatus.batteryLevel;
                 // Always show percentage, add lightning bolt only when charging
                 batteryEl.textContent = deviceStatus.isCharging ? `⚡${level}%` : `${level}%`;
-                batteryEl.classList.add('visible');
                 batteryEl.classList.toggle('charging', deviceStatus.isCharging);
                 batteryEl.classList.toggle('low', level <= 20 && !deviceStatus.isCharging);
             }
