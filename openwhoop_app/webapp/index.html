@@ -1422,82 +1422,105 @@
         // Process historical data to find sleep and calculate metrics
         function processSleepData() {
             if (historicalData.length < 10) {
-                debug('Not enough historical data for sleep analysis');
+                debug('Not enough historical data for analysis');
                 return;
             }
 
             // Sort by time
             historicalData.sort((a, b) => a.unix - b.unix);
 
-            // Find sleep periods (consecutive sleep activity readings)
+            // Collect all RR intervals and BPM readings from historical data
+            let allBPMs = [];
+            let allRR = [];
+
+            // Also track sleep-specific data
             let sleepStart = null;
             let sleepEnd = null;
-            let currentSleepReadings = [];
-            let currentSleepRR = [];
+            let sleepReadings = [];
+            let sleepRR = [];
 
-            // Look for sleep in the last 24 hours
+            // Look for data in the last 24 hours
             const oneDayAgo = Date.now() - 24 * 60 * 60 * 1000;
 
             for (const reading of historicalData) {
                 if (reading.time.getTime() < oneDayAgo) continue;
 
+                // Collect all valid data
+                if (reading.bpm > 30 && reading.bpm < 200) {
+                    allBPMs.push(reading.bpm);
+                }
+                if (reading.rr && reading.rr.length > 0) {
+                    allRR.push(...reading.rr);
+                }
+
+                // Track sleep periods
                 if (reading.activityType === 'sleep') {
                     if (!sleepStart) {
                         sleepStart = reading.time;
                     }
                     sleepEnd = reading.time;
-                    currentSleepReadings.push(reading);
+                    sleepReadings.push(reading);
                     if (reading.rr && reading.rr.length > 0) {
-                        currentSleepRR.push(...reading.rr);
+                        sleepRR.push(...reading.rr);
                     }
                 } else if (sleepStart && reading.activityType === 'awake') {
-                    // Sleep period ended
-                    if (currentSleepReadings.length > 30) { // At least 30 readings (~30 min)
-                        break; // Use this sleep period
+                    // Sleep period ended - if it was long enough, keep it
+                    if (sleepReadings.length < 30) {
+                        // Too short, reset and look for longer period
+                        sleepStart = null;
+                        sleepReadings = [];
+                        sleepRR = [];
                     }
-                    // Too short, reset and look for longer period
-                    sleepStart = null;
-                    currentSleepReadings = [];
-                    currentSleepRR = [];
                 }
             }
 
-            if (currentSleepReadings.length < 30) {
-                debug(`Only ${currentSleepReadings.length} sleep readings found, need 30+`);
-                return;
+            debug(`Historical data: ${allBPMs.length} BPM readings, ${allRR.length} RR intervals`);
+
+            // Determine which data to use for metrics
+            let useSleepData = sleepReadings.length >= 30;
+            let metricsSource = useSleepData ? 'sleep' : 'historical';
+            let bpmsToUse = useSleepData ? sleepReadings.map(r => r.bpm).filter(b => b > 30 && b < 200) : allBPMs;
+            let rrToUse = useSleepData ? sleepRR : allRR;
+
+            if (useSleepData) {
+                debug(`Using sleep data: ${sleepReadings.length} readings, ${sleepRR.length} RR intervals`);
+                sleepData.lastSleepStart = sleepStart;
+                sleepData.lastSleepEnd = sleepEnd;
+                sleepData.sleepReadings = sleepReadings;
+                sleepData.sleepRR = sleepRR;
+
+                // Sleep duration
+                const durationMs = sleepEnd.getTime() - sleepStart.getTime();
+                sleepMetrics.sleepDuration = durationMs;
+
+                // Sleep score (based on 8 hours ideal)
+                const idealSleep = 8 * 60 * 60 * 1000;
+                sleepMetrics.sleepScore = Math.min(100, Math.round((durationMs / idealSleep) * 100));
+            } else {
+                debug(`No sleep detected, using all ${allBPMs.length} historical readings`);
             }
 
-            debug(`Found sleep period: ${currentSleepReadings.length} readings, ${currentSleepRR.length} RR intervals`);
-
-            // Store sleep data
-            sleepData.lastSleepStart = sleepStart;
-            sleepData.lastSleepEnd = sleepEnd;
-            sleepData.sleepReadings = currentSleepReadings;
-            sleepData.sleepRR = currentSleepRR;
             sleepData.calculated = true;
 
-            // Calculate RHR (lowest 5% of readings during sleep)
-            const sleepBPMs = currentSleepReadings.map(r => r.bpm).filter(b => b > 0).sort((a, b) => a - b);
-            const rhrCount = Math.max(5, Math.floor(sleepBPMs.length * 0.05));
-            sleepMetrics.rhr = Math.round(sleepBPMs.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
+            // Calculate RHR (lowest 5-10% of readings)
+            if (bpmsToUse.length >= 10) {
+                bpmsToUse.sort((a, b) => a - b);
+                const rhrCount = Math.max(5, Math.floor(bpmsToUse.length * 0.05));
+                sleepMetrics.rhr = Math.round(bpmsToUse.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
+                debug(`RHR calculated from ${metricsSource}: ${sleepMetrics.rhr} bpm`);
+            }
 
             // Calculate HRV using RMSSD
-            if (currentSleepRR.length >= 10) {
-                sleepMetrics.hrv = Math.round(calculateRMSSD(currentSleepRR));
+            if (rrToUse.length >= 10) {
+                sleepMetrics.hrv = Math.round(calculateRMSSD(rrToUse));
+                debug(`HRV calculated from ${metricsSource}: ${sleepMetrics.hrv} ms`);
             }
 
             // Calculate respiratory rate
-            if (currentSleepRR.length >= 30) {
-                sleepMetrics.respRate = calculateRespiratoryRate(currentSleepRR);
+            if (rrToUse.length >= 30) {
+                sleepMetrics.respRate = calculateRespiratoryRate(rrToUse);
+                debug(`Resp rate calculated from ${metricsSource}: ${sleepMetrics.respRate?.toFixed(1)} rpm`);
             }
-
-            // Sleep duration
-            const durationMs = sleepEnd.getTime() - sleepStart.getTime();
-            sleepMetrics.sleepDuration = durationMs;
-
-            // Sleep score (based on 8 hours ideal)
-            const idealSleep = 8 * 60 * 60 * 1000;
-            sleepMetrics.sleepScore = Math.min(100, Math.round((durationMs / idealSleep) * 100));
 
             // SpO2 and Skin Temp - use real sensor data if available, otherwise estimate
             if (!sleepMetrics.spo2 && sensorData.rawOpticalValues.length < 10) {
@@ -1511,25 +1534,27 @@
                 debug('Skin Temp: using estimated value (no temperature events received)');
             }
 
-            debug(`Sleep metrics: RHR=${sleepMetrics.rhr}, HRV=${sleepMetrics.hrv}, Resp=${sleepMetrics.respRate?.toFixed(1)}`);
+            debug(`Metrics calculated from ${metricsSource} data: RHR=${sleepMetrics.rhr}, HRV=${sleepMetrics.hrv}, Resp=${sleepMetrics.respRate?.toFixed(1)}`);
 
-            // Update UI with sleep metrics
-            updateSleepMetricsUI();
+            // Update UI with calculated metrics
+            updateSleepMetricsUI(metricsSource);
         }
 
-        function updateSleepMetricsUI() {
+        function updateSleepMetricsUI(source = 'device') {
+            const sourceLabel = source === 'sleep' ? '(sleep)' : source === 'historical' ? '(device)' : '';
+
             if (sleepMetrics.rhr) {
                 document.getElementById('rhr-value').textContent = sleepMetrics.rhr;
                 const rhrStatus = document.getElementById('rhr-status');
                 rhrStatus.classList.remove('warning');
                 if (sleepMetrics.rhr < 50) {
-                    rhrStatus.textContent = `athletic < 50`;
+                    rhrStatus.textContent = `athletic ${sourceLabel}`;
                 } else if (sleepMetrics.rhr < 60) {
-                    rhrStatus.textContent = `good < 60`;
+                    rhrStatus.textContent = `good ${sourceLabel}`;
                 } else if (sleepMetrics.rhr < 70) {
-                    rhrStatus.textContent = `normal < 70`;
+                    rhrStatus.textContent = `normal ${sourceLabel}`;
                 } else {
-                    rhrStatus.textContent = `elevated > 70`;
+                    rhrStatus.textContent = `elevated ${sourceLabel}`;
                     rhrStatus.classList.add('warning');
                 }
             }
@@ -1539,13 +1564,13 @@
                 const hrvStatus = document.getElementById('hrv-status');
                 hrvStatus.classList.remove('warning');
                 if (sleepMetrics.hrv > 100) {
-                    hrvStatus.textContent = `excellent > 100`;
+                    hrvStatus.textContent = `excellent ${sourceLabel}`;
                 } else if (sleepMetrics.hrv > 50) {
-                    hrvStatus.textContent = `good 50-100`;
+                    hrvStatus.textContent = `good ${sourceLabel}`;
                 } else if (sleepMetrics.hrv > 30) {
-                    hrvStatus.textContent = `normal 30-50`;
+                    hrvStatus.textContent = `normal ${sourceLabel}`;
                 } else {
-                    hrvStatus.textContent = `low < 30`;
+                    hrvStatus.textContent = `low ${sourceLabel}`;
                     hrvStatus.classList.add('warning');
                 }
             }
@@ -1555,9 +1580,9 @@
                 const respStatus = document.getElementById('resp-status');
                 respStatus.classList.remove('warning');
                 if (sleepMetrics.respRate >= 12 && sleepMetrics.respRate <= 18) {
-                    respStatus.textContent = `within 12 - 18`;
+                    respStatus.textContent = `normal ${sourceLabel}`;
                 } else {
-                    respStatus.textContent = sleepMetrics.respRate < 12 ? `low < 12` : `elevated > 18`;
+                    respStatus.textContent = sleepMetrics.respRate < 12 ? `low ${sourceLabel}` : `elevated ${sourceLabel}`;
                     respStatus.classList.add('warning');
                 }
             }
@@ -1813,9 +1838,16 @@
                 if (reading && reading.bpm > 0) {
                     historicalData.push(reading);
 
-                    // Only log periodically
+                    // Log and process periodically
                     if (historicalData.length % 50 === 0) {
                         debug(`Collected ${historicalData.length} historical readings`);
+                    }
+
+                    // Process metrics when we have enough data (first time at 50, then every 200)
+                    if (historicalData.length === 50 ||
+                        (historicalData.length > 50 && historicalData.length % 200 === 0)) {
+                        debug('Processing historical data for metrics...');
+                        processSleepData();
                     }
                 }
 
