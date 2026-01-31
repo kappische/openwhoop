@@ -2095,17 +2095,15 @@
                 }
             }
 
-            // Use byte 7 as primary (closest in testing)
-            // But also check if byte 6 minus some offset works better
-            if (data.length >= 8) {
-                const byte6 = data[6];
+            // Use byte 13 as primary (testing showed: byte13=42 when official=45%, much better than byte7=28)
+            if (data.length >= 14) {
+                const byte13 = data[13];
                 const byte7 = data[7];
 
-                // Byte 7 seems to be the direct percentage value
-                if (byte7 > 0 && byte7 <= 100) {
-                    deviceStatus.batteryLevel = byte7;
+                if (byte13 > 0 && byte13 <= 100) {
+                    deviceStatus.batteryLevel = byte13;
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery from EVENT #63: ${byte7}% (byte7=${byte7}, byte6=${byte6})`);
+                    debug(`Battery from EVENT #63: ${byte13}% (byte13=${byte13}, byte7=${byte7})`);
                     updateBatteryUI();
                     return;
                 }
