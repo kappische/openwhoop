@@ -1443,6 +1443,11 @@
             let allBPMs = [];
             let allRR = [];
 
+            // Track resting data (inactive/sleep periods) for better RHR calculation
+            let restingBPMs = [];
+            let restingRR = [];
+            let activityCounts = {};
+
             // Also track sleep-specific data
             let sleepStart = null;
             let sleepEnd = null;
@@ -1455,12 +1460,28 @@
             for (const reading of historicalData) {
                 if (reading.time.getTime() < oneDayAgo) continue;
 
+                // Debug activity distribution (first time only)
+                if (!sleepData.activityDebugDone) {
+                    activityCounts[reading.activityType] = (activityCounts[reading.activityType] || 0) + 1;
+                }
+
                 // Collect all valid data
                 if (reading.bpm > 30 && reading.bpm < 200) {
                     allBPMs.push(reading.bpm);
+
+                    // Also track low-activity (resting) readings for RHR fallback
+                    if (reading.activityType === 'inactive' || reading.activityType === 'sleep') {
+                        restingBPMs.push(reading.bpm);
+                    }
                 }
                 if (reading.rr && reading.rr.length > 0) {
-                    allRR.push(...reading.rr);
+                    // Filter RR intervals to valid range (300-1500ms = 40-200 bpm)
+                    const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
+                    allRR.push(...validRR);
+
+                    if (reading.activityType === 'inactive' || reading.activityType === 'sleep') {
+                        restingRR.push(...validRR);
+                    }
                 }
 
                 // Track sleep periods
@@ -1471,7 +1492,8 @@
                     sleepEnd = reading.time;
                     sleepReadings.push(reading);
                     if (reading.rr && reading.rr.length > 0) {
-                        sleepRR.push(...reading.rr);
+                        const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
+                        sleepRR.push(...validRR);
                     }
                 } else if (sleepStart && reading.activityType === 'awake') {
                     // Sleep period ended - if it was long enough, keep it
@@ -1484,13 +1506,31 @@
                 }
             }
 
-            debug(`Historical data: ${allBPMs.length} BPM readings, ${allRR.length} RR intervals`);
+            // Log activity distribution once
+            if (!sleepData.activityDebugDone) {
+                debug(`Activity distribution: ${JSON.stringify(activityCounts)}`);
+                sleepData.activityDebugDone = true;
+            }
+
+            debug(`Historical data: ${allBPMs.length} BPM, ${restingBPMs.length} resting BPM, ${allRR.length} RR, ${restingRR.length} resting RR`);
 
             // Determine which data to use for metrics
+            // Priority: sleep data > resting data > all data
             let useSleepData = sleepReadings.length >= 30;
-            let metricsSource = useSleepData ? 'sleep' : 'historical';
-            let bpmsToUse = useSleepData ? sleepReadings.map(r => r.bpm).filter(b => b > 30 && b < 200) : allBPMs;
-            let rrToUse = useSleepData ? sleepRR : allRR;
+            let useRestingData = !useSleepData && restingBPMs.length >= 10;
+            let metricsSource = useSleepData ? 'sleep' : useRestingData ? 'resting' : 'historical';
+
+            let bpmsToUse, rrToUse;
+            if (useSleepData) {
+                bpmsToUse = sleepReadings.map(r => r.bpm).filter(b => b > 30 && b < 200);
+                rrToUse = sleepRR;
+            } else if (useRestingData) {
+                bpmsToUse = restingBPMs;
+                rrToUse = restingRR;
+            } else {
+                bpmsToUse = allBPMs;
+                rrToUse = allRR;
+            }
 
             if (useSleepData) {
                 debug(`Using sleep data: ${sleepReadings.length} readings, ${sleepRR.length} RR intervals`);
@@ -1506,8 +1546,10 @@
                 // Sleep score (based on 8 hours ideal)
                 const idealSleep = 8 * 60 * 60 * 1000;
                 sleepMetrics.sleepScore = Math.min(100, Math.round((durationMs / idealSleep) * 100));
+            } else if (useRestingData) {
+                debug(`No sleep detected, using ${restingBPMs.length} resting readings (inactive/sleep periods)`);
             } else {
-                debug(`No sleep detected, using all ${allBPMs.length} historical readings`);
+                debug(`No sleep/resting data, using all ${allBPMs.length} historical readings (may include active periods)`);
             }
 
             sleepData.calculated = true;
@@ -1516,14 +1558,20 @@
             if (bpmsToUse.length >= 10) {
                 bpmsToUse.sort((a, b) => a - b);
                 const rhrCount = Math.max(5, Math.floor(bpmsToUse.length * 0.05));
-                sleepMetrics.rhr = Math.round(bpmsToUse.slice(0, rhrCount).reduce((a, b) => a + b, 0) / rhrCount);
+                const lowestBPMs = bpmsToUse.slice(0, rhrCount);
+                sleepMetrics.rhr = Math.round(lowestBPMs.reduce((a, b) => a + b, 0) / rhrCount);
+                debug(`Lowest ${rhrCount} BPMs: [${lowestBPMs.join(', ')}]`);
                 debug(`RHR calculated from ${metricsSource}: ${sleepMetrics.rhr} bpm`);
             }
 
             // Calculate HRV using RMSSD
             if (rrToUse.length >= 10) {
+                // Log sample RR values for debugging
+                const sampleRR = rrToUse.slice(0, 10);
+                debug(`Sample RR intervals: [${sampleRR.join(', ')}] ms`);
+
                 sleepMetrics.hrv = Math.round(calculateRMSSD(rrToUse));
-                debug(`HRV calculated from ${metricsSource}: ${sleepMetrics.hrv} ms`);
+                debug(`HRV (RMSSD) calculated from ${metricsSource}: ${sleepMetrics.hrv} ms (from ${rrToUse.length} intervals)`);
             }
 
             // Calculate respiratory rate
