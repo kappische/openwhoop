@@ -1727,7 +1727,7 @@
                 }, 3000);
 
                 document.getElementById('status-dot').classList.add('connected');
-                document.getElementById('status-text').textContent = 'Connected';
+                document.getElementById('status-text').textContent = ''; // Just show green dot when connected
                 document.getElementById('connect-screen').classList.add('hidden');
                 document.getElementById('main-app').classList.add('active');
                 document.getElementById('debug-console').classList.add('visible');
@@ -1970,8 +1970,8 @@
             const batteryEl = document.getElementById('battery-status');
             if (deviceStatus.batteryLevel !== null) {
                 const level = deviceStatus.batteryLevel;
-                const icon = deviceStatus.isCharging ? '⚡' : (level > 80 ? '🔋' : level > 20 ? '🔋' : '🪫');
-                batteryEl.textContent = `${icon} ${level}%`;
+                // Always show percentage, add lightning bolt only when charging
+                batteryEl.textContent = deviceStatus.isCharging ? `⚡${level}%` : `${level}%`;
                 batteryEl.classList.add('visible');
                 batteryEl.classList.toggle('charging', deviceStatus.isCharging);
                 batteryEl.classList.toggle('low', level <= 20 && !deviceStatus.isCharging);
