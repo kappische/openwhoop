@@ -1126,7 +1126,8 @@
             REALTIME_DATA: 40,
             REALTIME_RAW_DATA: 43,
             HISTORICAL_DATA: 47,
-            EVENT: 48
+            EVENT: 48,
+            METADATA: 49
         };
 
         // Event Numbers (from Whoop protocol)
@@ -1732,9 +1733,13 @@
                 await cmdChar.writeValueWithoutResponse(setClock());
                 await sleep(100);
 
-                // Request all historical data (like Rust implementation - send 0x00)
-                debug('Requesting historical data for sleep analysis...');
-                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, 22, [0x00]));
+                // Request historical data from last 48 hours for sleep analysis
+                const twoDaysAgo = Math.floor((Date.now() - 48 * 60 * 60 * 1000) / 1000);
+                debug('Requesting historical data (48h) for sleep analysis...');
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, 22, [
+                    twoDaysAgo & 0xFF, (twoDaysAgo >> 8) & 0xFF,
+                    (twoDaysAgo >> 16) & 0xFF, (twoDaysAgo >> 24) & 0xFF
+                ]));
                 await sleep(500); // Give time for historical data to arrive
 
                 debug('Sending enterHighFreqSync...');
