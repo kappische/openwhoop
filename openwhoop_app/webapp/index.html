@@ -2186,8 +2186,8 @@
         function updateMetrics(bpm, rawData, isHistorical = false) {
             const now = Date.now();
 
-            // Skip UI updates for historical data (we're just collecting it)
-            if (isHistorical && !sleepData.calculated) {
+            // Historical data is only for metrics calculation, not live display
+            if (isHistorical) {
                 return;
             }
 
