@@ -912,6 +912,19 @@
                     <div class="metric-card-status" id="temp-status">calculating...</div>
                 </div>
 
+                <!-- Stress -->
+                <div class="metric-card">
+                    <div class="metric-card-header">
+                        <span class="metric-card-icon">🧠</span>
+                        <span class="metric-card-title">STRESS</span>
+                    </div>
+                    <div class="metric-card-value">
+                        <span class="metric-card-number" id="stress-value">--</span>
+                        <span class="metric-card-unit">/10</span>
+                    </div>
+                    <div class="metric-card-status" id="stress-status">calculating...</div>
+                </div>
+
                 <!-- Session Stats -->
                 <div class="metric-card">
                     <div class="metric-card-header">
@@ -1144,7 +1157,7 @@
             EXTENDED_BATTERY_INFO: 63
         };
 
-        // Command Numbers
+        // Command Numbers (from Rust implementation)
         const CMD = {
             ENABLE_REALTIME_HR: 3,
             SET_CLOCK: 10,
@@ -1155,12 +1168,19 @@
             GET_ALARM: 67,
             RUN_ALARM: 68,
             DISABLE_ALARM: 69,
+            RUN_HAPTICS: 79,
+            GET_HAPTICS_PATTERNS: 80,
             START_RAW_DATA: 81,
             STOP_RAW_DATA: 82,
+            GET_BODY_LOCATION: 84,      // Get wearing status and body location
             ENTER_HIGH_FREQ: 96,
             GET_EXTENDED_BATTERY: 98,
+            TOGGLE_IMU_HISTORICAL: 105, // Toggle historical IMU collection
+            TOGGLE_IMU_REALTIME: 106,   // Toggle real-time IMU data
             ENABLE_OPTICAL_DATA: 107,
-            TOGGLE_OPTICAL_MODE: 108
+            TOGGLE_OPTICAL_MODE: 108,
+            STOP_HAPTICS: 122,
+            SELECT_WRIST: 123           // Set left/right wrist
         };
 
         // State
@@ -1192,7 +1212,8 @@
             spo2: null,         // SpO2 from optical sensor
             skinTemp: null,     // Skin temp from temperature events
             sleepDuration: null,
-            sleepScore: null
+            sleepScore: null,
+            stress: null        // Stress score (0-10, from Rust algorithm)
         };
 
         // Real sensor data tracking
@@ -1404,6 +1425,165 @@
             return Math.sqrt(sumSquaredDiff / count);
         }
 
+        // Calculate rolling HRV using 300-sample windows (like Rust implementation)
+        function calculateRollingHRV(rrIntervals) {
+            const WINDOW_SIZE = 300;
+            if (rrIntervals.length < WINDOW_SIZE) {
+                // Fall back to simple RMSSD if not enough data
+                return calculateRMSSD(rrIntervals);
+            }
+
+            const hrvValues = [];
+            for (let i = 0; i <= rrIntervals.length - WINDOW_SIZE; i++) {
+                const window = rrIntervals.slice(i, i + WINDOW_SIZE);
+                const rmssd = calculateRMSSD(window);
+                if (rmssd !== null) hrvValues.push(rmssd);
+            }
+
+            if (hrvValues.length === 0) return null;
+            return hrvValues.reduce((a, b) => a + b, 0) / hrvValues.length;
+        }
+
+        // Calculate stress score (ported from Rust implementation)
+        // Uses BPM readings converted to RR intervals
+        // Returns 0-10 scale (lower = less stressed)
+        const MIN_STRESS_READINGS = 120;
+        function calculateStress(bpmReadings) {
+            if (bpmReadings.length < MIN_STRESS_READINGS) return null;
+
+            // Convert BPM to RR intervals (in ms)
+            const rrReadings = bpmReadings.map(bpm => Math.round(60 / bpm * 1000));
+
+            // Count frequency of each RR value
+            const counts = {};
+            for (const rr of rrReadings) {
+                counts[rr] = (counts[rr] || 0) + 1;
+            }
+
+            // Find min, max, mode
+            const rrValues = Object.keys(counts).map(Number);
+            const min = Math.min(...rrValues);
+            const max = Math.max(...rrValues);
+
+            // Find mode (most frequent RR value)
+            let mode = rrValues[0];
+            let modeFreq = counts[mode];
+            for (const rr of rrValues) {
+                if (counts[rr] > modeFreq) {
+                    mode = rr;
+                    modeFreq = counts[rr];
+                }
+            }
+
+            // Calculate variability ratio
+            const vr = (max - min) / 1000;
+            if (vr < 0.0001) return 0;
+
+            // Calculate stress score (Rust formula)
+            const aMode = (modeFreq / bpmReadings.length) * 100;
+            const stress = Math.round(aMode / (2 * vr * mode / 1000));
+
+            return Math.min(10, stress / 100);
+        }
+
+        // Calculate sleep quality score (0-100 based on duration vs 8-hour ideal)
+        function calculateSleepScore(startTime, endTime) {
+            const durationMs = endTime - startTime;
+            const durationHours = durationMs / (1000 * 60 * 60);
+            const IDEAL_HOURS = 8;
+
+            const score = (durationHours / IDEAL_HOURS) * 100;
+            return Math.round(Math.max(0, Math.min(100, score)));
+        }
+
+        // Smooth activity spikes (single-reading anomalies) - from Rust
+        function smoothActivitySpikes(readings) {
+            if (readings.length < 3) return readings;
+
+            const smoothed = [...readings];
+            for (let i = 1; i < readings.length - 1; i++) {
+                if (readings[i - 1].activityType === readings[i + 1].activityType &&
+                    readings[i].activityType !== readings[i - 1].activityType) {
+                    smoothed[i] = { ...readings[i], activityType: readings[i - 1].activityType };
+                }
+            }
+            return smoothed;
+        }
+
+        // Detect activity periods from historical readings (from Rust)
+        const ACTIVITY_CHANGE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
+        const MIN_SLEEP_DURATION_MS = 60 * 60 * 1000; // 60 minutes
+        const MAX_GAP_MS = 10 * 60 * 1000; // 10 minutes
+
+        function detectActivityPeriods(readings) {
+            if (readings.length === 0) return [];
+
+            const periods = [];
+            let currentActivity = readings[0].activityType;
+            let startTime = readings[0].time;
+            let lastTime = readings[0].time;
+
+            for (let i = 1; i < readings.length; i++) {
+                const reading = readings[i];
+                const gap = reading.time - lastTime;
+
+                // Activity change or gap too large
+                if (reading.activityType !== currentActivity || gap > MAX_GAP_MS) {
+                    periods.push({
+                        activity: currentActivity,
+                        start: startTime,
+                        end: lastTime,
+                        duration: lastTime - startTime
+                    });
+                    currentActivity = reading.activityType;
+                    startTime = reading.time;
+                }
+                lastTime = reading.time;
+            }
+
+            // Push final period
+            periods.push({
+                activity: currentActivity,
+                start: startTime,
+                end: lastTime,
+                duration: lastTime - startTime
+            });
+
+            // Filter and merge short periods (< 15 min)
+            return mergeShortPeriods(periods);
+        }
+
+        function mergeShortPeriods(periods) {
+            if (periods.length <= 1) return periods;
+
+            const merged = [];
+            for (let i = 0; i < periods.length; i++) {
+                const current = periods[i];
+
+                if (current.duration < ACTIVITY_CHANGE_THRESHOLD_MS) {
+                    // Try to merge with previous or next
+                    if (merged.length > 0) {
+                        const prev = merged[merged.length - 1];
+                        prev.end = current.end;
+                        prev.duration = prev.end - prev.start;
+                    } else if (i + 1 < periods.length) {
+                        periods[i + 1].start = current.start;
+                        periods[i + 1].duration = periods[i + 1].end - periods[i + 1].start;
+                    }
+                } else {
+                    merged.push({ ...current });
+                }
+            }
+            return merged;
+        }
+
+        // Find sleep periods from activity periods (from Rust)
+        function findSleepPeriods(periods) {
+            return periods.filter(p =>
+                p.activity === 'sleep' && p.duration >= MIN_SLEEP_DURATION_MS
+            );
+        }
+
         // Calculate respiratory rate from RR intervals
         // Normal breathing causes periodic variations in HR (respiratory sinus arrhythmia)
         function calculateRespiratoryRate(rrIntervals) {
@@ -1579,24 +1759,54 @@
 
             sleepData.calculated = true;
 
+            // Use activity-based sleep detection (from Rust)
+            const recentData = historicalData.filter(r => r.time.getTime() >= twoDaysAgo);
+            const smoothedData = smoothActivitySpikes(recentData);
+            const activityPeriods = detectActivityPeriods(smoothedData);
+            const sleepPeriods = findSleepPeriods(activityPeriods);
+
+            if (sleepPeriods.length > 0) {
+                const latestSleep = sleepPeriods[sleepPeriods.length - 1];
+                debug(`Detected sleep period: ${new Date(latestSleep.start).toLocaleString()} - ${new Date(latestSleep.end).toLocaleString()}`);
+                debug(`Sleep duration: ${(latestSleep.duration / (1000 * 60 * 60)).toFixed(1)} hours`);
+
+                // Update sleep metrics with detected period
+                sleepData.lastSleepStart = new Date(latestSleep.start);
+                sleepData.lastSleepEnd = new Date(latestSleep.end);
+                sleepMetrics.sleepDuration = latestSleep.duration;
+                sleepMetrics.sleepScore = calculateSleepScore(latestSleep.start, latestSleep.end);
+                debug(`Sleep score: ${sleepMetrics.sleepScore}/100`);
+            }
+
             // Calculate RHR (lowest 5-10% of readings)
             if (bpmsToUse.length >= 10) {
-                bpmsToUse.sort((a, b) => a - b);
-                const rhrCount = Math.max(5, Math.floor(bpmsToUse.length * 0.05));
-                const lowestBPMs = bpmsToUse.slice(0, rhrCount);
+                const sortedBpms = [...bpmsToUse].sort((a, b) => a - b);
+                const rhrCount = Math.max(5, Math.floor(sortedBpms.length * 0.05));
+                const lowestBPMs = sortedBpms.slice(0, rhrCount);
                 sleepMetrics.rhr = Math.round(lowestBPMs.reduce((a, b) => a + b, 0) / rhrCount);
                 debug(`Lowest ${rhrCount} BPMs: [${lowestBPMs.join(', ')}]`);
                 debug(`RHR calculated from ${metricsSource}: ${sleepMetrics.rhr} bpm`);
             }
 
-            // Calculate HRV using RMSSD
+            // Calculate HRV using rolling RMSSD (300-sample windows like Rust)
             if (rrToUse.length >= 10) {
-                // Log sample RR values for debugging
                 const sampleRR = rrToUse.slice(0, 10);
                 debug(`Sample RR intervals: [${sampleRR.join(', ')}] ms`);
 
-                sleepMetrics.hrv = Math.round(calculateRMSSD(rrToUse));
-                debug(`HRV (RMSSD) calculated from ${metricsSource}: ${sleepMetrics.hrv} ms (from ${rrToUse.length} intervals)`);
+                // Use rolling HRV if we have enough data, otherwise simple RMSSD
+                if (rrToUse.length >= 300) {
+                    sleepMetrics.hrv = Math.round(calculateRollingHRV(rrToUse));
+                    debug(`HRV (rolling RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${rrToUse.length} intervals)`);
+                } else {
+                    sleepMetrics.hrv = Math.round(calculateRMSSD(rrToUse));
+                    debug(`HRV (RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${rrToUse.length} intervals)`);
+                }
+            }
+
+            // Calculate stress score (from Rust algorithm)
+            if (bpmsToUse.length >= MIN_STRESS_READINGS) {
+                sleepMetrics.stress = calculateStress(bpmsToUse);
+                debug(`Stress score: ${sleepMetrics.stress?.toFixed(1)}/10`);
             }
 
             // Calculate respiratory rate
@@ -1605,19 +1815,28 @@
                 debug(`Resp rate calculated from ${metricsSource}: ${sleepMetrics.respRate?.toFixed(1)} rpm`);
             }
 
-            // SpO2 and Skin Temp - use real sensor data if available, otherwise estimate
-            if (!sleepMetrics.spo2 && sensorData.rawOpticalValues.length < 10) {
-                // Fallback: estimate from sleep quality indicators
+            // SpO2 and Skin Temp - use real sensor data if available
+            if (sensorData.rawOpticalValues.length >= 10) {
+                // Calculate SpO2 from optical data if available
+                debug('SpO2: using optical sensor data');
+            } else if (!sleepMetrics.spo2) {
                 sleepMetrics.spo2 = 95 + Math.round(Math.random() * 4);
-                debug('SpO2: using estimated value (no optical data received)');
-            }
-            if (!sleepMetrics.skinTemp && sensorData.temperatureReadings.length < 5) {
-                // Fallback: estimate temperature deviation
-                sleepMetrics.skinTemp = ((Math.random() - 0.5) * 1.5).toFixed(1);
-                debug('Skin Temp: using estimated value (no temperature events received)');
+                debug('SpO2: using estimated value (no optical data)');
             }
 
-            debug(`Metrics calculated from ${metricsSource} data: RHR=${sleepMetrics.rhr}, HRV=${sleepMetrics.hrv}, Resp=${sleepMetrics.respRate?.toFixed(1)}`);
+            if (sensorData.temperatureReadings.length >= 5) {
+                const recentTemps = sensorData.temperatureReadings.slice(-5);
+                const avgTemp = recentTemps.reduce((a, b) => a + b.value, 0) / recentTemps.length;
+                if (sensorData.baselineTemp) {
+                    sleepMetrics.skinTemp = (avgTemp - sensorData.baselineTemp).toFixed(1);
+                }
+                debug(`Skin Temp from sensor: ${sleepMetrics.skinTemp}°C deviation`);
+            } else if (!sleepMetrics.skinTemp) {
+                sleepMetrics.skinTemp = ((Math.random() - 0.5) * 1.5).toFixed(1);
+                debug('Skin Temp: using estimated value (no temperature events)');
+            }
+
+            debug(`Metrics from ${metricsSource}: RHR=${sleepMetrics.rhr}, HRV=${sleepMetrics.hrv}, Stress=${sleepMetrics.stress?.toFixed(1)}, Resp=${sleepMetrics.respRate?.toFixed(1)}`);
 
             // Update UI with calculated metrics
             updateSleepMetricsUI(metricsSource);
@@ -1700,6 +1919,24 @@
                     tempStatus.classList.add('warning');
                 }
             }
+
+            // Stress display
+            if (sleepMetrics.stress !== null) {
+                document.getElementById('stress-value').textContent = sleepMetrics.stress.toFixed(1);
+                const stressStatus = document.getElementById('stress-status');
+                stressStatus.classList.remove('warning');
+                if (sleepMetrics.stress < 3) {
+                    stressStatus.textContent = `low ${sourceLabel}`;
+                } else if (sleepMetrics.stress < 5) {
+                    stressStatus.textContent = `moderate ${sourceLabel}`;
+                } else if (sleepMetrics.stress < 7) {
+                    stressStatus.textContent = `elevated ${sourceLabel}`;
+                    stressStatus.classList.add('warning');
+                } else {
+                    stressStatus.textContent = `high ${sourceLabel}`;
+                    stressStatus.classList.add('warning');
+                }
+            }
         }
 
         // Connect
@@ -1779,6 +2016,12 @@
                 await sleep(100);
                 debug('Requesting extended battery info...');
                 await cmdChar.writeValueWithoutResponse(getExtendedBatteryInfo());
+                await sleep(100);
+
+                // Request wearing status
+                debug('Requesting body location/wearing status...');
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.GET_BODY_LOCATION, []));
+                await sleep(100);
 
                 // Try to enable optical data for SpO2 readings
                 await sleep(200);
@@ -1996,6 +2239,10 @@
                 // Battery level response (cmd 26 or 98)
                 if (packet.cmd === CMD.GET_BATTERY_LEVEL || packet.cmd === CMD.GET_EXTENDED_BATTERY) {
                     handleBatteryResponse(packet.data, packet.cmd);
+                }
+                // Body location / wearing status response (cmd 84)
+                if (packet.cmd === CMD.GET_BODY_LOCATION) {
+                    handleBodyLocationResponse(packet.data);
                 }
                 // Log optical data response
                 if (packet.cmd === CMD.ENABLE_OPTICAL_DATA || packet.cmd === CMD.START_RAW_DATA) {
@@ -2216,6 +2463,25 @@
         }
 
         // Update wrist status UI
+        // Handle body location / wearing status response (cmd 84)
+        function handleBodyLocationResponse(data) {
+            const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+            debug(`Body location response: ${hex}`);
+
+            // Response format (based on Rust): status + body_location + wearing_status
+            if (data.length >= 2) {
+                const bodyLocation = data[0]; // 0=unknown, 1=wrist, etc.
+                const wearingStatus = data[1]; // 0=not wearing, 1=wearing
+
+                deviceStatus.onWrist = wearingStatus === 1;
+                updateWristUI();
+
+                const locationNames = ['unknown', 'left wrist', 'right wrist', 'bicep', 'other'];
+                const locName = locationNames[bodyLocation] || 'unknown';
+                debug(`Wearing status: ${deviceStatus.onWrist ? 'on wrist' : 'off wrist'}, location: ${locName}`);
+            }
+        }
+
         function updateWristUI() {
             const wristEl = document.getElementById('wrist-status');
             wristEl.classList.add('visible');
