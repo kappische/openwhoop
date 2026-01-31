@@ -1944,42 +1944,31 @@
         function processPacket(packet) {
 
             // Heart rate packets - Historical (type 47)
-            // Each reading is 28 bytes - large packets contain multiple readings
-            const READING_SIZE = 28;
-            if (packet.type === 47 && packet.data.length >= READING_SIZE) {
-                // Calculate how many complete readings are in this packet
-                const numReadings = Math.floor(packet.data.length / READING_SIZE);
-                let validCount = 0;
-                let latestBpm = 0;
+            // Following Rust implementation: each packet contains ONE reading (first 28 bytes)
+            // The remaining bytes are sensor/calibration data, not additional readings
+            if (packet.type === 47 && packet.data.length >= 28) {
+                // Parse only the first reading from the packet (like Rust does)
+                const reading = parseHistoricalReading(packet.data.slice(0, 28));
 
-                // Parse each reading in the packet
-                for (let i = 0; i < numReadings; i++) {
-                    const offset = i * READING_SIZE;
-                    const readingData = packet.data.slice(offset, offset + READING_SIZE);
-                    const reading = parseHistoricalReading(readingData);
-
-                    // Filter out invalid readings (BPM should be 30-200 for a resting human)
-                    if (reading && reading.bpm >= 30 && reading.bpm <= 200) {
+                if (reading && reading.bpm >= 30 && reading.bpm <= 200) {
+                    // Validate timestamp is reasonable (after 2020, before 2030)
+                    const year = reading.time.getFullYear();
+                    if (year >= 2020 && year <= 2030) {
                         historicalData.push(reading);
-                        validCount++;
-                        latestBpm = reading.bpm;
-                    }
-                }
 
-                if (validCount > 0) {
-                    // Log parsing results for debugging
-                    if (historicalData.length <= 100 || historicalData.length % 200 === 0) {
-                        debug(`Parsed ${validCount}/${numReadings} valid readings (total: ${historicalData.length})`);
-                    }
+                        // Log periodically
+                        if (historicalData.length <= 20 || historicalData.length % 100 === 0) {
+                            debug(`Historical reading #${historicalData.length}: ${reading.time.toISOString()} bpm=${reading.bpm}`);
+                        }
 
-                    // Process metrics when we have enough data
-                    if (historicalData.length >= 50 && historicalData.length % 100 === 0) {
-                        debug('Processing historical data for metrics...');
-                        processSleepData();
-                    }
+                        // Process metrics when we have enough data
+                        if (historicalData.length === 50 || historicalData.length % 200 === 0) {
+                            debug(`Processing ${historicalData.length} historical readings...`);
+                            processSleepData();
+                        }
 
-                    // Update display with latest valid BPM
-                    if (latestBpm > 0) updateMetrics(latestBpm, packet.data, true);
+                        updateMetrics(reading.bpm, packet.data, true);
+                    }
                 }
             }
             // Heart rate packets - Realtime (type 40)
