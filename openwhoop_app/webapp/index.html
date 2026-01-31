@@ -1755,17 +1755,13 @@
                 await cmdChar.writeValueWithoutResponse(setClock());
                 await sleep(100);
 
-                // Request historical data from last 48 hours for sleep analysis
-                const twoDaysAgo = Math.floor((Date.now() - 48 * 60 * 60 * 1000) / 1000);
-                const twoDaysAgoDate = new Date(twoDaysAgo * 1000);
-                debug(`Requesting historical data since: ${twoDaysAgoDate.toISOString()} (unix=${twoDaysAgo})`);
-                const histPacket = createPacket(35, 0, 22, [
-                    twoDaysAgo & 0xFF, (twoDaysAgo >> 8) & 0xFF,
-                    (twoDaysAgo >> 16) & 0xFF, (twoDaysAgo >> 24) & 0xFF
-                ]);
+                // Request historical data using simple [0x00] format (like Rust implementation)
+                // This requests all available historical data from the device
+                debug('Requesting historical data (all available)...');
+                const histPacket = createPacket(35, 0, 22, [0x00]);
                 debug(`Historical data request packet: ${Array.from(histPacket).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
                 await cmdChar.writeValueWithoutResponse(histPacket);
-                await sleep(1000); // Give time for historical data to arrive
+                await sleep(2000); // Give more time for historical data to start arriving
 
                 debug('Sending enterHighFreqSync...');
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
@@ -2131,34 +2127,25 @@
             }
             debug(`Battery candidates: ${candidates.join(', ')}`);
 
-            // Try to calculate from voltage if present (bytes 14-15 might be voltage in mV)
+            // PRIMARY: Calculate from voltage (bytes 14-15 in mV, little endian)
+            // Voltage is the most reliable indicator - byte positions vary but voltage is stable
+            // Calibrated formula based on: 3868mV = 49% (from official app)
+            // Assuming: 4200mV = 100% (full), 3549mV = 0% (empty)
             if (data.length >= 16) {
                 const voltage = data[14] | (data[15] << 8);
-                if (voltage > 3000 && voltage < 4300) {
-                    // LiPo: 3.0V = 0%, 4.2V = 100%
-                    const pct = Math.round(((voltage - 3000) / 1200) * 100);
-                    debug(`Voltage-based battery: ${voltage}mV = ${pct}%`);
-                }
-            }
-
-            // Battery percentage appears to be byte 10 divided by 2
-            // Testing: byte10=97, official=49%, and 97/2=48.5 ≈ 49%
-            if (data.length >= 11) {
-                const byte10 = data[10];
-
-                // Byte 10 divided by 2 matches official app
-                const batteryPct = Math.round(byte10 / 2);
-
-                if (batteryPct > 0 && batteryPct <= 100) {
-                    deviceStatus.batteryLevel = batteryPct;
+                if (voltage > 3400 && voltage < 4300) {
+                    // Calibrated Whoop battery curve
+                    const pct = Math.round(((voltage - 3549) / 651) * 100);
+                    const clampedPct = Math.max(0, Math.min(100, pct));
+                    debug(`Battery from voltage: ${voltage}mV = ${clampedPct}%`);
+                    deviceStatus.batteryLevel = clampedPct;
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery from EVENT #63: ${batteryPct}% (byte10=${byte10}/2=${batteryPct})`);
                     updateBatteryUI();
                     return;
                 }
             }
 
-            // Fallback: first valid percentage after timestamp
+            // Fallback: first valid percentage after timestamp (less reliable)
             for (let i = 4; i < data.length; i++) {
                 if (data[i] > 0 && data[i] <= 100) {
                     const pct = data[i];
