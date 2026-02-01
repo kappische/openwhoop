@@ -1679,8 +1679,7 @@
         let sleepData = {
             lastSleepStart: null,
             lastSleepEnd: null,
-            sleepReadings: [],  // Readings during sleep
-            sleepRR: [],        // RR intervals during sleep
+            sleepReadings: [],  // Readings during sleep (cleanRR averages RR per reading)
             calculated: false   // Whether we've calculated sleep metrics
         };
 
@@ -1907,30 +1906,38 @@
             return Math.sqrt(sumSquaredDiff / count);
         }
 
+        // Clean RR intervals like Rust: average RR intervals within each reading
+        // This converts multiple RR intervals per reading into one averaged value
+        function cleanRR(readings) {
+            const cleaned = [];
+            for (const reading of readings) {
+                if (!reading.rr || reading.rr.length === 0) continue;
+                const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
+                if (validRR.length === 0) continue;
+                // Average the RR intervals for this reading (like Rust's clean_rr)
+                const avg = validRR.reduce((a, b) => a + b, 0) / validRR.length;
+                cleaned.push(avg);
+            }
+            return cleaned;
+        }
+
         // Calculate weighted RMSSD from sleep readings (like Whoop)
         // Weights late-night sleep more heavily (last 2 hours get 2x weight)
+        // Uses averaged RR per reading (like Rust implementation)
         function calculateWeightedSleepHRV(sleepReadings, sleepStart, sleepEnd) {
             if (!sleepReadings || sleepReadings.length < 10 || !sleepStart || !sleepEnd) {
                 return null;
             }
 
-            const sleepDuration = sleepEnd.getTime() - sleepStart.getTime();
             const lateNightThreshold = sleepEnd.getTime() - (2 * 60 * 60 * 1000); // Last 2 hours
 
-            // Collect RR intervals with weights
-            let earlyRR = [];
-            let lateRR = [];
+            // Split readings into early and late
+            const earlyReadings = sleepReadings.filter(r => r.time.getTime() < lateNightThreshold);
+            const lateReadings = sleepReadings.filter(r => r.time.getTime() >= lateNightThreshold);
 
-            for (const reading of sleepReadings) {
-                if (!reading.rr || reading.rr.length === 0) continue;
-                const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
-
-                if (reading.time.getTime() >= lateNightThreshold) {
-                    lateRR.push(...validRR);
-                } else {
-                    earlyRR.push(...validRR);
-                }
-            }
+            // Clean RR: average intervals per reading (like Rust)
+            const earlyRR = cleanRR(earlyReadings);
+            const lateRR = cleanRR(lateReadings);
 
             // Calculate RMSSD for each period
             const earlyRMSSD = calculateRMSSD(earlyRR);
@@ -1940,15 +1947,13 @@
             if (earlyRMSSD !== null && lateRMSSD !== null) {
                 // Weighted average: early (1x) + late (2x)
                 const weighted = (earlyRMSSD + lateRMSSD * 2) / 3;
-                debug(`HRV weighting: early=${Math.round(earlyRMSSD)}ms (${earlyRR.length} RR), late=${Math.round(lateRMSSD)}ms (${lateRR.length} RR)`);
+                debug(`HRV weighting: early=${Math.round(earlyRMSSD)}ms (${earlyRR.length} readings), late=${Math.round(lateRMSSD)}ms (${lateRR.length} readings)`);
                 return weighted;
             } else if (lateRMSSD !== null) {
-                // Only late sleep data - use it directly
-                debug(`HRV from late sleep only: ${Math.round(lateRMSSD)}ms (${lateRR.length} RR)`);
+                debug(`HRV from late sleep only: ${Math.round(lateRMSSD)}ms (${lateRR.length} readings)`);
                 return lateRMSSD;
             } else if (earlyRMSSD !== null) {
-                // Only early sleep data - use it directly
-                debug(`HRV from early sleep only: ${Math.round(earlyRMSSD)}ms (${earlyRR.length} RR)`);
+                debug(`HRV from early sleep only: ${Math.round(earlyRMSSD)}ms (${earlyRR.length} readings)`);
                 return earlyRMSSD;
             }
 
@@ -1956,22 +1961,29 @@
         }
 
         // Calculate rolling HRV using 300-sample windows (like Rust implementation)
-        function calculateRollingHRV(rrIntervals) {
+        // Input should be cleaned RR (one averaged value per reading)
+        function calculateRollingHRV(cleanedRR) {
             const WINDOW_SIZE = 300;
-            if (rrIntervals.length < WINDOW_SIZE) {
+            if (cleanedRR.length < WINDOW_SIZE) {
                 // Fall back to simple RMSSD if not enough data
-                return calculateRMSSD(rrIntervals);
+                return calculateRMSSD(cleanedRR);
             }
 
             const hrvValues = [];
-            for (let i = 0; i <= rrIntervals.length - WINDOW_SIZE; i++) {
-                const window = rrIntervals.slice(i, i + WINDOW_SIZE);
+            for (let i = 0; i <= cleanedRR.length - WINDOW_SIZE; i++) {
+                const window = cleanedRR.slice(i, i + WINDOW_SIZE);
                 const rmssd = calculateRMSSD(window);
                 if (rmssd !== null) hrvValues.push(rmssd);
             }
 
             if (hrvValues.length === 0) return null;
             return hrvValues.reduce((a, b) => a + b, 0) / hrvValues.length;
+        }
+
+        // Clean raw RR data from flat array to match Rust approach
+        // This is for cases where we don't have per-reading grouping
+        function cleanRRFromReadings(readings) {
+            return cleanRR(readings);
         }
 
         // Calculate stress score (ported from Rust implementation)
@@ -2148,24 +2160,24 @@
             // Sort by time
             historicalData.sort((a, b) => a.unix - b.unix);
 
-            // Collect all RR intervals and BPM readings from historical data
+            // Collect BPM readings from historical data
             let allBPMs = [];
-            let allRR = [];
 
             // Track resting data (inactive/sleep periods) for better RHR calculation
             let restingBPMs = [];
-            let restingRR = [];
             let activityCounts = {};
 
             // Track nighttime data (10pm-8am) as sleep proxy
             let nighttimeBPMs = [];
-            let nighttimeRR = [];
+            let nighttimeReadings = [];  // Full readings for cleanRR
+
+            // Track resting readings (for HRV when no sleep data)
+            let restingReadings = [];  // Full readings for cleanRR
 
             // Also track sleep-specific data
             let sleepStart = null;
             let sleepEnd = null;
             let sleepReadings = [];
-            let sleepRR = [];
 
             // Look for data in the last 48 hours (to capture sleep data)
             const twoDaysAgo = Date.now() - 48 * 60 * 60 * 1000;
@@ -2196,17 +2208,13 @@
                         restingBPMs.push(reading.bpm);
                     }
                 }
+                // Track readings with RR data for HRV calculation (cleanRR will average per reading)
                 if (reading.rr && reading.rr.length > 0) {
-                    // Filter RR intervals to valid range (300-1500ms = 40-200 bpm)
-                    const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
-                    allRR.push(...validRR);
-
                     if (isNighttime) {
-                        nighttimeRR.push(...validRR);
+                        nighttimeReadings.push(reading);
                     }
-
                     if (reading.activityType === 'inactive' || reading.activityType === 'sleep') {
-                        restingRR.push(...validRR);
+                        restingReadings.push(reading);
                     }
                 }
 
@@ -2220,17 +2228,12 @@
                     }
                     sleepEnd = reading.time;
                     sleepReadings.push(reading);
-                    if (reading.rr && reading.rr.length > 0) {
-                        const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
-                        sleepRR.push(...validRR);
-                    }
                 } else if (sleepStart && (reading.activityType === 'awake' || !isNighttime)) {
                     // Sleep period ended - if it was long enough, keep it
                     if (sleepReadings.length < 30) {
                         // Too short, reset and look for longer period
                         sleepStart = null;
                         sleepReadings = [];
-                        sleepRR = [];
                     }
                 }
             }
@@ -2250,27 +2253,30 @@
             let useRestingData = !useSleepData && !useNighttimeData && restingBPMs.length >= 10;
             let metricsSource = useSleepData ? 'sleep' : useNighttimeData ? 'nighttime' : useRestingData ? 'resting' : 'historical';
 
-            let bpmsToUse, rrToUse;
+            let bpmsToUse, readingsForHRV;
             if (useSleepData) {
                 bpmsToUse = sleepReadings.map(r => r.bpm).filter(b => b > 30 && b < 200);
-                rrToUse = sleepRR;
+                readingsForHRV = sleepReadings;
             } else if (useNighttimeData) {
                 bpmsToUse = nighttimeBPMs;
-                rrToUse = nighttimeRR;
+                readingsForHRV = nighttimeReadings;
             } else if (useRestingData) {
                 bpmsToUse = restingBPMs;
-                rrToUse = restingRR;
+                readingsForHRV = restingReadings;
             } else {
                 bpmsToUse = allBPMs;
-                rrToUse = allRR;
+                // For "all" data, use all historical readings from last 48h
+                readingsForHRV = historicalData.filter(r => r.time.getTime() >= twoDaysAgo && r.rr && r.rr.length > 0);
             }
 
+            // Get cleaned RR (one averaged value per reading, like Rust)
+            const cleanedRR = cleanRR(readingsForHRV);
+
             if (useSleepData) {
-                debug(`Using sleep data: ${sleepReadings.length} readings, ${sleepRR.length} RR intervals`);
+                debug(`Using sleep data: ${sleepReadings.length} readings, ${cleanedRR.length} cleaned RR values`);
                 sleepData.lastSleepStart = sleepStart;
                 sleepData.lastSleepEnd = sleepEnd;
                 sleepData.sleepReadings = sleepReadings;
-                sleepData.sleepRR = sleepRR;
 
                 // Sleep duration
                 const durationMs = sleepEnd.getTime() - sleepStart.getTime();
@@ -2280,11 +2286,11 @@
                 const idealSleep = 8 * 60 * 60 * 1000;
                 sleepMetrics.sleepScore = Math.min(100, Math.round((durationMs / idealSleep) * 100));
             } else if (useNighttimeData) {
-                debug(`Using nighttime data (10pm-8am): ${nighttimeBPMs.length} readings, ${nighttimeRR.length} RR intervals`);
+                debug(`Using nighttime data (10pm-8am): ${nighttimeReadings.length} readings, ${cleanedRR.length} cleaned RR values`);
             } else if (useRestingData) {
-                debug(`No sleep/nighttime data, using ${restingBPMs.length} resting readings`);
+                debug(`No sleep/nighttime data, using ${restingReadings.length} resting readings, ${cleanedRR.length} cleaned RR values`);
             } else {
-                debug(`No sleep/nighttime/resting data, using all ${allBPMs.length} readings (may include active)`);
+                debug(`No sleep/nighttime/resting data, using ${readingsForHRV.length} readings (may include active)`);
             }
 
             sleepData.calculated = true;
@@ -2319,27 +2325,28 @@
             }
 
             // Calculate HRV - use weighted sleep HRV if we have sleep data with timestamps
+            // Note: cleanRR averages RR intervals within each reading (like Rust's clean_rr)
             if (useSleepData && sleepReadings.length >= 10 && sleepStart && sleepEnd) {
                 // Use weighted HRV that emphasizes late-night sleep (like Whoop)
                 const weightedHRV = calculateWeightedSleepHRV(sleepReadings, sleepStart, sleepEnd);
                 if (weightedHRV !== null) {
                     sleepMetrics.hrv = Math.round(weightedHRV);
                     debug(`HRV (weighted late-night): ${sleepMetrics.hrv} ms`);
-                } else if (rrToUse.length >= 10) {
-                    sleepMetrics.hrv = Math.round(calculateRMSSD(rrToUse));
+                } else if (cleanedRR.length >= 10) {
+                    sleepMetrics.hrv = Math.round(calculateRMSSD(cleanedRR));
                     debug(`HRV (RMSSD fallback): ${sleepMetrics.hrv} ms`);
                 }
-            } else if (rrToUse.length >= 10) {
-                const sampleRR = rrToUse.slice(0, 10);
-                debug(`Sample RR intervals: [${sampleRR.join(', ')}] ms`);
+            } else if (cleanedRR.length >= 10) {
+                const sampleRR = cleanedRR.slice(0, 10);
+                debug(`Sample cleaned RR (avg per reading): [${sampleRR.map(r => r.toFixed(0)).join(', ')}] ms`);
 
-                // Use rolling HRV if we have enough data, otherwise simple RMSSD
-                if (rrToUse.length >= 300) {
-                    sleepMetrics.hrv = Math.round(calculateRollingHRV(rrToUse));
-                    debug(`HRV (rolling RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${rrToUse.length} intervals)`);
+                // Use rolling HRV if we have enough data (300 readings), otherwise simple RMSSD
+                if (cleanedRR.length >= 300) {
+                    sleepMetrics.hrv = Math.round(calculateRollingHRV(cleanedRR));
+                    debug(`HRV (rolling RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${cleanedRR.length} readings)`);
                 } else {
-                    sleepMetrics.hrv = Math.round(calculateRMSSD(rrToUse));
-                    debug(`HRV (RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${rrToUse.length} intervals)`);
+                    sleepMetrics.hrv = Math.round(calculateRMSSD(cleanedRR));
+                    debug(`HRV (RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${cleanedRR.length} readings)`);
                 }
             }
 
@@ -2349,9 +2356,9 @@
                 debug(`Stress score: ${sleepMetrics.stress?.toFixed(1)}/10`);
             }
 
-            // Calculate respiratory rate
-            if (rrToUse.length >= 30) {
-                sleepMetrics.respRate = calculateRespiratoryRate(rrToUse);
+            // Calculate respiratory rate (using cleaned RR)
+            if (cleanedRR.length >= 30) {
+                sleepMetrics.respRate = calculateRespiratoryRate(cleanedRR);
                 debug(`Resp rate calculated from ${metricsSource}: ${sleepMetrics.respRate?.toFixed(1)} rpm`);
             }
 
