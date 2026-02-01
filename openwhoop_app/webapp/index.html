@@ -2953,9 +2953,9 @@
             // Based on whoomp reverse engineering
             if (cmd === CMD.GET_BATTERY_LEVEL) {
                 if (data.length >= 4) {
-                    // Read 16-bit little-endian at offset 2, divide by 10
+                    // Read 16-bit little-endian at offset 2, divide by 10, floor to match Whoop
                     const rawBattery = data[2] | (data[3] << 8);
-                    batteryLevel = rawBattery / 10.0;
+                    batteryLevel = Math.floor(rawBattery / 10);
                     debug(`Battery from cmd 26: raw=${rawBattery}, level=${batteryLevel}%`);
                 }
             }
