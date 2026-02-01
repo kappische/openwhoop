@@ -2866,12 +2866,12 @@
             debug(`═══ BATTERY EVENT #63 ANALYSIS ═══`);
             debug(`Raw hex: ${Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
 
-            // Show key byte candidates (bytes 5-12 after timestamp)
-            const keyBytes = [];
-            for (let i = 5; i <= 12 && i < data.length; i++) {
-                keyBytes.push(`[${i}]=${data[i]}`);
+            // Show ALL bytes for analysis
+            const allBytes = [];
+            for (let i = 0; i < Math.min(data.length, 20); i++) {
+                allBytes.push(`[${i}]=${data[i]}`);
             }
-            debug(`Key bytes: ${keyBytes.join(', ')}`);
+            debug(`All bytes: ${allBytes.join(', ')}`);
 
             // Show voltage from bytes 14-15
             if (data.length >= 16) {
@@ -2880,10 +2880,10 @@
                 debug(`Voltage: ${voltage}mV (=${voltPct}% via curve)`);
             }
 
-            // Show all values that could be battery % (1-100 range)
+            // Show all values that could be battery % (0-100 range)
             const candidates = [];
-            for (let i = 5; i < Math.min(data.length, 20); i++) {
-                if (data[i] >= 1 && data[i] <= 100) {
+            for (let i = 0; i < Math.min(data.length, 20); i++) {
+                if (data[i] >= 0 && data[i] <= 100) {
                     candidates.push(`byte${i}=${data[i]}%`);
                 }
             }
