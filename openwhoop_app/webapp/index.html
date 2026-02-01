@@ -2404,6 +2404,16 @@
                 await cmdChar.writeValueWithoutResponse(getAlarmTime());
                 await sleep(100);
 
+                // Sync scheduled alarm to device if enabled
+                if (globalAlarmEnabled && schedules && schedules.length > 0) {
+                    const nextAlarm = getNextScheduledAlarmFromSchedules();
+                    if (nextAlarm) {
+                        debug('Syncing scheduled alarm to device...');
+                        await doSetAlarm(nextAlarm);
+                    }
+                }
+                await sleep(100);
+
                 // Get battery level (try both commands)
                 debug('Requesting battery level...');
                 await cmdChar.writeValueWithoutResponse(getBatteryLevel());
@@ -3416,25 +3426,37 @@
             return sorted.map(d => shortNames[d][0]).join(' ');
         }
 
-        function toggleGlobalAlarm() {
+        async function toggleGlobalAlarm() {
             globalAlarmEnabled = !globalAlarmEnabled;
             document.getElementById('alarm-toggle').classList.toggle('active', globalAlarmEnabled);
 
-            if (!globalAlarmEnabled && cmdChar) {
-                cmdChar.writeValueWithoutResponse(disableAlarmCmd());
+            if (!globalAlarmEnabled) {
+                if (cmdChar) {
+                    try {
+                        await cmdChar.writeValueWithoutResponse(disableAlarmCmd());
+                        debug('Alarm disabled on device');
+                    } catch (e) {
+                        debug('Failed to disable alarm on device: ' + e);
+                    }
+                }
                 updateAlarmStatus(null);
                 deviceAlarm = null;
             } else if (globalAlarmEnabled) {
                 // Re-enable next scheduled alarm
                 const nextAlarm = getNextScheduledAlarmFromSchedules();
-                if (nextAlarm && cmdChar) {
-                    doSetAlarm(nextAlarm);
+                if (nextAlarm) {
+                    if (cmdChar) {
+                        await doSetAlarm(nextAlarm);
+                    } else {
+                        debug('Schedule enabled (will sync when connected)');
+                        updateAlarmStatus(nextAlarm);
+                    }
                 }
             }
             saveToStorage();
         }
 
-        function toggleScheduleEnabled(id) {
+        async function toggleScheduleEnabled(id) {
             const schedule = schedules.find(s => s.id === id);
             if (schedule) {
                 schedule.enabled = !schedule.enabled;
@@ -3444,8 +3466,12 @@
                 // Update device alarm if needed
                 if (globalAlarmEnabled) {
                     const nextAlarm = getNextScheduledAlarmFromSchedules();
-                    if (nextAlarm && cmdChar) {
-                        doSetAlarm(nextAlarm);
+                    if (nextAlarm) {
+                        if (cmdChar) {
+                            await doSetAlarm(nextAlarm);
+                        } else {
+                            updateAlarmStatus(nextAlarm);
+                        }
                     }
                 }
             }
@@ -3542,7 +3568,7 @@
             });
         }
 
-        function saveSchedule() {
+        async function saveSchedule() {
             const time = document.getElementById('schedule-time-input').value;
 
             if (editingScheduleId) {
@@ -3571,10 +3597,15 @@
             saveToStorage();
 
             // Set the next alarm on device
-            if (globalAlarmEnabled && cmdChar) {
+            if (globalAlarmEnabled) {
                 const nextAlarm = getNextScheduledAlarmFromSchedules();
                 if (nextAlarm) {
-                    doSetAlarm(nextAlarm);
+                    if (cmdChar) {
+                        await doSetAlarm(nextAlarm);
+                    } else {
+                        updateAlarmStatus(nextAlarm);
+                        debug('Schedule saved (will sync when connected)');
+                    }
                 }
             }
         }
@@ -3600,18 +3631,28 @@
             document.getElementById('schedule-modal').style.display = 'flex';
         }
 
-        function deleteSchedule(id) {
+        async function deleteSchedule(id) {
             schedules = schedules.filter(s => s.id !== id);
             renderScheduleList();
             saveToStorage();
 
             // Update device alarm
-            if (globalAlarmEnabled && cmdChar) {
+            if (globalAlarmEnabled) {
                 const nextAlarm = getNextScheduledAlarmFromSchedules();
                 if (nextAlarm) {
-                    doSetAlarm(nextAlarm);
+                    if (cmdChar) {
+                        await doSetAlarm(nextAlarm);
+                    } else {
+                        updateAlarmStatus(nextAlarm);
+                    }
                 } else {
-                    cmdChar.writeValueWithoutResponse(disableAlarmCmd());
+                    if (cmdChar) {
+                        try {
+                            await cmdChar.writeValueWithoutResponse(disableAlarmCmd());
+                        } catch (e) {
+                            debug('Failed to disable alarm: ' + e);
+                        }
+                    }
                     updateAlarmStatus(null);
                 }
             }
