@@ -2949,20 +2949,14 @@
 
             let batteryLevel = null;
 
-            // GetBatteryLevel (26): Response format [status, battery_level]
-            // Byte 0 is status (0=success), byte 1 is battery percentage
+            // GetBatteryLevel (26): 16-bit LE at offset 2, divided by 10
+            // Based on whoomp reverse engineering
             if (cmd === CMD.GET_BATTERY_LEVEL) {
-                if (data.length >= 2) {
-                    // Try byte 1 first (after status byte)
-                    if (data[1] > 0 && data[1] <= 100) {
-                        batteryLevel = data[1];
-                        debug(`Battery from cmd 26 byte 1: ${batteryLevel}%`);
-                    }
-                    // If byte 1 is 0 or invalid, try byte 0 (some devices may not have status)
-                    else if (data[0] > 0 && data[0] <= 100) {
-                        batteryLevel = data[0];
-                        debug(`Battery from cmd 26 byte 0: ${batteryLevel}%`);
-                    }
+                if (data.length >= 4) {
+                    // Read 16-bit little-endian at offset 2, divide by 10
+                    const rawBattery = data[2] | (data[3] << 8);
+                    batteryLevel = rawBattery / 10.0;
+                    debug(`Battery from cmd 26: raw=${rawBattery}, level=${batteryLevel}%`);
                 }
             }
             // GetExtendedBatteryInfo (98): More complex response with voltage, current, etc.
