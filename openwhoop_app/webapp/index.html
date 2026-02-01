@@ -1907,6 +1907,54 @@
             return Math.sqrt(sumSquaredDiff / count);
         }
 
+        // Calculate weighted RMSSD from sleep readings (like Whoop)
+        // Weights late-night sleep more heavily (last 2 hours get 2x weight)
+        function calculateWeightedSleepHRV(sleepReadings, sleepStart, sleepEnd) {
+            if (!sleepReadings || sleepReadings.length < 10 || !sleepStart || !sleepEnd) {
+                return null;
+            }
+
+            const sleepDuration = sleepEnd.getTime() - sleepStart.getTime();
+            const lateNightThreshold = sleepEnd.getTime() - (2 * 60 * 60 * 1000); // Last 2 hours
+
+            // Collect RR intervals with weights
+            let earlyRR = [];
+            let lateRR = [];
+
+            for (const reading of sleepReadings) {
+                if (!reading.rr || reading.rr.length === 0) continue;
+                const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
+
+                if (reading.time.getTime() >= lateNightThreshold) {
+                    lateRR.push(...validRR);
+                } else {
+                    earlyRR.push(...validRR);
+                }
+            }
+
+            // Calculate RMSSD for each period
+            const earlyRMSSD = calculateRMSSD(earlyRR);
+            const lateRMSSD = calculateRMSSD(lateRR);
+
+            // Weight late sleep 2x (like Whoop weights deeper/late-night sleep)
+            if (earlyRMSSD !== null && lateRMSSD !== null) {
+                // Weighted average: early (1x) + late (2x)
+                const weighted = (earlyRMSSD + lateRMSSD * 2) / 3;
+                debug(`HRV weighting: early=${Math.round(earlyRMSSD)}ms (${earlyRR.length} RR), late=${Math.round(lateRMSSD)}ms (${lateRR.length} RR)`);
+                return weighted;
+            } else if (lateRMSSD !== null) {
+                // Only late sleep data - use it directly
+                debug(`HRV from late sleep only: ${Math.round(lateRMSSD)}ms (${lateRR.length} RR)`);
+                return lateRMSSD;
+            } else if (earlyRMSSD !== null) {
+                // Only early sleep data - use it directly
+                debug(`HRV from early sleep only: ${Math.round(earlyRMSSD)}ms (${earlyRR.length} RR)`);
+                return earlyRMSSD;
+            }
+
+            return null;
+        }
+
         // Calculate rolling HRV using 300-sample windows (like Rust implementation)
         function calculateRollingHRV(rrIntervals) {
             const WINDOW_SIZE = 300;
@@ -2270,8 +2318,18 @@
                 debug(`RHR calculated from ${metricsSource}: ${sleepMetrics.rhr} bpm`);
             }
 
-            // Calculate HRV using rolling RMSSD (300-sample windows like Rust)
-            if (rrToUse.length >= 10) {
+            // Calculate HRV - use weighted sleep HRV if we have sleep data with timestamps
+            if (useSleepData && sleepReadings.length >= 10 && sleepStart && sleepEnd) {
+                // Use weighted HRV that emphasizes late-night sleep (like Whoop)
+                const weightedHRV = calculateWeightedSleepHRV(sleepReadings, sleepStart, sleepEnd);
+                if (weightedHRV !== null) {
+                    sleepMetrics.hrv = Math.round(weightedHRV);
+                    debug(`HRV (weighted late-night): ${sleepMetrics.hrv} ms`);
+                } else if (rrToUse.length >= 10) {
+                    sleepMetrics.hrv = Math.round(calculateRMSSD(rrToUse));
+                    debug(`HRV (RMSSD fallback): ${sleepMetrics.hrv} ms`);
+                }
+            } else if (rrToUse.length >= 10) {
                 const sampleRR = rrToUse.slice(0, 10);
                 debug(`Sample RR intervals: [${sampleRR.join(', ')}] ms`);
 
