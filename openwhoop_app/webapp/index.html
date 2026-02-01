@@ -1624,30 +1624,43 @@
             EXTENDED_BATTERY_INFO: 63
         };
 
-        // Command Numbers (from Rust implementation)
+        // Command Numbers (from Rust + whoomp)
         const CMD = {
+            LINK_VALID: 1,              // Validate connection
+            GET_PROTOCOL_VERSION: 2,    // Get max protocol version
             ENABLE_REALTIME_HR: 3,
+            REPORT_VERSION_INFO: 7,     // Get firmware version
             SET_CLOCK: 10,
+            GET_CLOCK: 11,              // Get device time
+            TOGGLE_GENERIC_HR: 14,      // Broadcast HR to other BLE devices
+            ABORT_HISTORICAL: 20,       // Stop historical data transfer
             SEND_HISTORICAL: 22,
+            HISTORICAL_DATA_RESULT: 23, // Acknowledge historical data
             GET_BATTERY_LEVEL: 26,
+            REBOOT_STRAP: 29,           // Reboot device
+            GET_DATA_RANGE: 34,         // Get available data range
             HELLO_HARVARD: 35,
             SET_ALARM: 66,
             GET_ALARM: 67,
             RUN_ALARM: 68,
             DISABLE_ALARM: 69,
+            GET_ADVERTISING_NAME: 76,   // Get device name
+            SET_ADVERTISING_NAME: 77,   // Set device name
             RUN_HAPTICS: 79,
             GET_HAPTICS_PATTERNS: 80,
             START_RAW_DATA: 81,
             STOP_RAW_DATA: 82,
-            GET_BODY_LOCATION: 84,      // Get wearing status and body location
+            GET_BODY_LOCATION: 84,
             ENTER_HIGH_FREQ: 96,
+            EXIT_HIGH_FREQ: 97,         // Exit high freq sync
             GET_EXTENDED_BATTERY: 98,
-            TOGGLE_IMU_HISTORICAL: 105, // Toggle historical IMU collection
-            TOGGLE_IMU_REALTIME: 106,   // Toggle real-time IMU data
+            RESET_FUEL_GAUGE: 99,       // Reset battery gauge
+            TOGGLE_IMU_HISTORICAL: 105,
+            TOGGLE_IMU_REALTIME: 106,
             ENABLE_OPTICAL_DATA: 107,
             TOGGLE_OPTICAL_MODE: 108,
             STOP_HAPTICS: 122,
-            SELECT_WRIST: 123           // Set left/right wrist
+            SELECT_WRIST: 123
         };
 
         // State
@@ -1699,7 +1712,9 @@
             batteryLevel: null,         // Battery percentage (0-100)
             isCharging: false,          // Whether device is charging
             onWrist: true,              // Whether device is on wrist
-            lastBatteryUpdate: 0        // Timestamp of last battery update
+            lastBatteryUpdate: 0,       // Timestamp of last battery update
+            firmwareVersion: null,      // Firmware version string
+            deviceName: null            // Device advertising name
         };
 
         // Activity thresholds (from Whoop protocol)
@@ -2492,9 +2507,17 @@
                 await cmdChar.writeValueWithoutResponse(getBatteryLevel());
                 await sleep(100);
 
+                // Get firmware version
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.REPORT_VERSION_INFO, [0x00]));
+                await sleep(100);
+
+                // Get device name
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.GET_ADVERTISING_NAME, [0x00]));
+                await sleep(100);
+
                 // Request wearing status
                 debug('Requesting body location/wearing status...');
-                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.GET_BODY_LOCATION, []));
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.GET_BODY_LOCATION, [0x00]));
                 await sleep(100);
 
                 // Try to enable optical data for SpO2 readings
@@ -2729,6 +2752,14 @@
                 if (packet.cmd === CMD.ENABLE_OPTICAL_DATA || packet.cmd === CMD.START_RAW_DATA) {
                     debug(`Optical/Raw data response: ${Array.from(packet.data).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
                 }
+                // Firmware version response (cmd 7)
+                if (packet.cmd === CMD.REPORT_VERSION_INFO) {
+                    handleVersionResponse(packet.data);
+                }
+                // Device name response (cmd 76)
+                if (packet.cmd === CMD.GET_ADVERTISING_NAME) {
+                    handleDeviceNameResponse(packet.data);
+                }
             }
             // Event packets (type 48) - includes temperature events
             else if (packet.type === PACKET_TYPE.EVENT) {
@@ -2878,6 +2909,32 @@
                 deviceStatus.lastBatteryUpdate = Date.now();
                 debug(`Battery: ${batteryLevel}%`);
                 updateBatteryUI();
+            }
+        }
+
+        // Handle firmware version response (cmd 7)
+        function handleVersionResponse(data) {
+            // Format: [status, pad, pad, h_major(4), h_minor(4), h_patch(4), ...]
+            if (data.length >= 15) {
+                const major = data[3] | (data[4] << 8) | (data[5] << 16) | (data[6] << 24);
+                const minor = data[7] | (data[8] << 8) | (data[9] << 16) | (data[10] << 24);
+                const patch = data[11] | (data[12] << 8) | (data[13] << 16) | (data[14] << 24);
+                deviceStatus.firmwareVersion = `${major}.${minor}.${patch}`;
+                debug(`Firmware: ${deviceStatus.firmwareVersion}`);
+            }
+        }
+
+        // Handle device name response (cmd 76)
+        function handleDeviceNameResponse(data) {
+            // Skip status byte, rest is null-terminated string
+            if (data.length > 1) {
+                const nameBytes = data.slice(1);
+                const nullIdx = nameBytes.indexOf(0);
+                const name = String.fromCharCode(...(nullIdx > 0 ? nameBytes.slice(0, nullIdx) : nameBytes));
+                if (name) {
+                    deviceStatus.deviceName = name;
+                    debug(`Device name: ${name}`);
+                }
             }
         }
 
