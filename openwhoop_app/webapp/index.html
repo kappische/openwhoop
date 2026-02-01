@@ -1617,6 +1617,10 @@
             TEMPERATURE_LEVEL: 17,
             RAW_DATA_ON: 46,
             RAW_DATA_OFF: 47,
+            STRAP_ALARM_SET: 56,
+            STRAP_ALARM_EXECUTED: 57,
+            APP_ALARM_EXECUTED: 58,
+            STRAP_ALARM_DISABLED: 59,
             EXTENDED_BATTERY_INFO: 63
         };
 
@@ -2562,6 +2566,13 @@
                     }
                 }, 5 * 60 * 1000);
 
+                // Set up periodic alarm refresh - push next alarm when current one passes (every minute)
+                setInterval(async () => {
+                    if (cmdChar && globalAlarmEnabled && schedules.length > 0) {
+                        await refreshAlarmIfNeeded();
+                    }
+                }, 60 * 1000);
+
                 device.addEventListener('gattserverdisconnected', onDisconnect);
 
             } catch (e) {
@@ -2788,6 +2799,34 @@
             // Extended Battery Info event (63) - most reliable battery source
             else if (eventNum === EVENT_NUMBER.EXTENDED_BATTERY_INFO) {
                 handleExtendedBatteryEvent(data);
+            }
+            // Alarm executed events (57, 58) - push next scheduled alarm
+            else if (eventNum === EVENT_NUMBER.STRAP_ALARM_EXECUTED || eventNum === EVENT_NUMBER.APP_ALARM_EXECUTED) {
+                debug('Alarm executed! Pushing next scheduled alarm...');
+                handleAlarmExecuted();
+            }
+            // Alarm disabled event (59)
+            else if (eventNum === EVENT_NUMBER.STRAP_ALARM_DISABLED) {
+                debug('Alarm disabled on device');
+                deviceAlarm = null;
+                updateDeviceAlarmUI(null);
+            }
+        }
+
+        // Handle alarm executed - push next scheduled alarm
+        async function handleAlarmExecuted() {
+            deviceAlarm = null;
+
+            if (globalAlarmEnabled && schedules.length > 0) {
+                const nextAlarm = getNextScheduledAlarmFromSchedules();
+                if (nextAlarm && cmdChar) {
+                    debug(`Pushing next alarm: ${nextAlarm.toLocaleString()}`);
+                    await doSetAlarm(nextAlarm, true);
+                } else {
+                    updateDeviceAlarmUI(null);
+                }
+            } else {
+                updateDeviceAlarmUI(null);
             }
         }
 
@@ -3797,6 +3836,29 @@
             }
 
             return nextAlarm;
+        }
+
+        // Check if device alarm has passed and push next scheduled alarm
+        async function refreshAlarmIfNeeded() {
+            const now = new Date();
+            const nextScheduled = getNextScheduledAlarmFromSchedules();
+
+            // If device alarm has passed, push the next one
+            if (deviceAlarm && deviceAlarm <= now) {
+                debug('Device alarm has passed, pushing next scheduled alarm');
+                deviceAlarm = null;
+
+                if (nextScheduled) {
+                    await doSetAlarm(nextScheduled, true); // silent
+                } else {
+                    updateDeviceAlarmUI(null);
+                }
+            }
+            // If no device alarm but we have schedules, sync
+            else if (!deviceAlarm && nextScheduled && globalAlarmEnabled) {
+                debug('No device alarm, syncing next scheduled alarm');
+                await doSetAlarm(nextScheduled, true); // silent
+            }
         }
 
         // Update time display when input changes
