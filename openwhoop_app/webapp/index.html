@@ -2866,7 +2866,7 @@
             debug(`Extended Battery event hex: ${hex}`);
             debug(`Extended Battery event dec: ${decimal}`);
 
-            // Show all potential battery values for debugging
+            // Show potential battery values for debugging
             const candidates = [];
             for (let i = 4; i < Math.min(data.length, 20); i++) {
                 if (data[i] > 0 && data[i] <= 100) {
@@ -2875,21 +2875,24 @@
             }
             debug(`Battery candidates: ${candidates.join(', ')}`);
 
-            // FIRST: Try to find direct percentage bytes (device may send calculated %)
-            // Check common offsets where battery percentage might be sent directly
-            for (let i = 4; i < Math.min(data.length, 12); i++) {
-                if (data[i] > 0 && data[i] <= 100) {
-                    const pct = data[i];
-                    debug(`Battery from EVENT #63 byte ${i}: ${pct}%`);
-                    deviceStatus.batteryLevel = pct;
-                    deviceStatus.lastBatteryUpdate = Date.now();
-                    updateBatteryUI();
-                    return;
-                }
+            // EVENT #63 structure (based on observed data):
+            // Bytes 0-4: timestamp/header
+            // Byte 5: unknown (often >100)
+            // Byte 6: unknown (NOT battery %)
+            // Byte 7: State of Charge % from fuel gauge
+            // Bytes 14-15: voltage in mV (little-endian)
+            //
+            // Use byte 7 for SoC - this matches Whoop app values
+            if (data.length >= 8 && data[7] > 0 && data[7] <= 100) {
+                const pct = data[7];
+                debug(`Battery SoC from byte 7: ${pct}%`);
+                deviceStatus.batteryLevel = pct;
+                deviceStatus.lastBatteryUpdate = Date.now();
+                updateBatteryUI();
+                return;
             }
 
             // FALLBACK: Calculate from voltage using non-linear Li-ion discharge curve
-            // Bytes 14-15 typically contain voltage in mV (little endian)
             if (data.length >= 16) {
                 const voltage = data[14] | (data[15] << 8);
                 if (voltage > 3400 && voltage < 4300) {
