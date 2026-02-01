@@ -2487,12 +2487,9 @@
                 }
                 await sleep(100);
 
-                // Get battery level (try both commands)
+                // Get battery level
                 debug('Requesting battery level...');
                 await cmdChar.writeValueWithoutResponse(getBatteryLevel());
-                await sleep(100);
-                debug('Requesting extended battery info...');
-                await cmdChar.writeValueWithoutResponse(getExtendedBatteryInfo());
                 await sleep(100);
 
                 // Request wearing status
@@ -2720,8 +2717,8 @@
                 if (packet.cmd === 67) {
                     handleAlarmResponse(packet.data);
                 }
-                // Battery level response (cmd 26 or 98)
-                if (packet.cmd === CMD.GET_BATTERY_LEVEL || packet.cmd === CMD.GET_EXTENDED_BATTERY) {
+                // Battery level response (cmd 26)
+                if (packet.cmd === CMD.GET_BATTERY_LEVEL) {
                     handleBatteryResponse(packet.data, packet.cmd);
                 }
                 // Body location / wearing status response (cmd 84)
@@ -2830,88 +2827,16 @@
             }
         }
 
-        // Handle battery event (EVENT #3)
+        // Handle battery event (EVENT #3) - informational only, cmd 26 is authoritative
         function handleBatteryEvent(data) {
-            const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            const decimal = Array.from(data).map((b, i) => `[${i}]=${b}`).join(' ');
-            debug(`Battery event hex: ${hex}`);
-            debug(`Battery event dec: ${decimal}`);
-
-            // Event structure: [timestamp (4 bytes), battery_level, ...]
-            // Skip the 4-byte timestamp, battery level is at byte 4
-            if (data.length >= 5) {
-                const level = data[4];
-                if (level > 0 && level <= 100) {
-                    deviceStatus.batteryLevel = level;
-                    deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery level from event: ${level}%`);
-                    updateBatteryUI();
-                    return;
-                }
-            }
-
-            // Fallback: search from byte 4 onwards (but don't update - EVENT #63 is more reliable)
-            for (let i = 4; i < data.length; i++) {
-                if (data[i] > 0 && data[i] <= 100) {
-                    debug(`Battery level from event #3 (ignored): ${data[i]}% (offset ${i}) - waiting for EVENT #63`);
-                    return;
-                }
-            }
+            // Battery level now comes from cmd 26 response, not events
+            // This event is just logged for debugging
         }
 
-        // Handle Extended Battery Info event (EVENT #63) - most reliable battery source
+        // Handle Extended Battery Info event (EVENT #63) - informational only
         function handleExtendedBatteryEvent(data) {
-            // Detailed debug output for battery analysis
-            // Compare these values with Whoop app to find correct byte offset
-            debug(`═══ BATTERY EVENT #63 ANALYSIS ═══`);
-            debug(`Raw hex: ${Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
-
-            // Show ALL bytes for analysis (full packet)
-            const allBytes = [];
-            for (let i = 0; i < data.length; i++) {
-                allBytes.push(`[${i}]=${data[i]}`);
-            }
-            debug(`All bytes: ${allBytes.join(', ')}`);
-
-            // Show voltage from bytes 14-15
-            if (data.length >= 16) {
-                const voltage = data[14] | (data[15] << 8);
-                const voltPct = voltageToPercent(voltage);
-                debug(`Voltage: ${voltage}mV (=${voltPct}% via curve)`);
-            }
-
-            // Show all values that could be battery % (0-100 range)
-            const candidates = [];
-            for (let i = 0; i < data.length; i++) {
-                if (data[i] >= 0 && data[i] <= 100) {
-                    candidates.push(`byte${i}=${data[i]}%`);
-                }
-            }
-            debug(`Possible %: ${candidates.join(', ')}`);
-            debug(`═══ Compare with Whoop app now! ═══`);
-
-            // Byte 16 is the battery SoC percentage
-            if (data.length >= 17 && data[16] >= 1 && data[16] <= 100) {
-                const pct = data[16];
-                debug(`Battery SoC (byte 16): ${pct}%`);
-                deviceStatus.batteryLevel = pct;
-                deviceStatus.lastBatteryUpdate = Date.now();
-                updateBatteryUI();
-                return;
-            }
-
-            // FALLBACK: Calculate from voltage
-            if (data.length >= 16) {
-                const voltage = data[14] | (data[15] << 8);
-                if (voltage > 3400 && voltage < 4300) {
-                    const pct = voltageToPercent(voltage);
-                    debug(`Using voltage: ${voltage}mV = ${pct}%`);
-                    deviceStatus.batteryLevel = pct;
-                    deviceStatus.lastBatteryUpdate = Date.now();
-                    updateBatteryUI();
-                    return;
-                }
-            }
+            // Battery level now comes from cmd 26 response, not events
+            // This event contains voltage/charging info but we don't need to parse it
         }
 
         // Li-ion battery voltage to percentage (non-linear discharge curve)
@@ -2940,53 +2865,19 @@
             return mV > 4200 ? 100 : 0;
         }
 
-        // Handle battery level command response (cmd 26 or 98)
+        // Handle battery level command response (cmd 26)
         function handleBatteryResponse(data, cmd) {
-            const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
-            const decimal = Array.from(data).map((b, i) => `[${i}]=${b}`).join(' ');
-            debug(`Battery cmd ${cmd} response hex: ${hex}`);
-            debug(`Battery cmd ${cmd} response dec: ${decimal}`);
+            // Only cmd 26 is authoritative for battery level
+            if (cmd !== CMD.GET_BATTERY_LEVEL) return;
 
-            let batteryLevel = null;
-
-            // GetBatteryLevel (26): 16-bit LE at offset 2, divided by 10
-            // Based on whoomp reverse engineering
-            if (cmd === CMD.GET_BATTERY_LEVEL) {
-                if (data.length >= 4) {
-                    // Read 16-bit little-endian at offset 2, divide by 10, floor to match Whoop
-                    const rawBattery = data[2] | (data[3] << 8);
-                    batteryLevel = Math.floor(rawBattery / 10);
-                    debug(`Battery from cmd 26: raw=${rawBattery}, level=${batteryLevel}%`);
-                }
-            }
-            // GetExtendedBatteryInfo (98): More complex response with voltage, current, etc.
-            // Try known offsets for extended battery info
-            else if (cmd === CMD.GET_EXTENDED_BATTERY) {
-                // Try several known positions where battery % might be
-                // Extended format varies, try: byte 1, byte 2, or last valid byte
-                const tryOffsets = [1, 2, 3, 4, 5];
-                for (const offset of tryOffsets) {
-                    if (offset < data.length && data[offset] > 0 && data[offset] <= 100) {
-                        batteryLevel = data[offset];
-                        debug(`Battery from cmd 98 offset ${offset}: ${batteryLevel}%`);
-                        break;
-                    }
-                }
-            }
-
-            if (batteryLevel !== null) {
-                // Only update from command response if no recent EVENT #63 update
-                const timeSinceUpdate = Date.now() - deviceStatus.lastBatteryUpdate;
-                if (timeSinceUpdate > 10000 || deviceStatus.batteryLevel === null) {
-                    deviceStatus.batteryLevel = batteryLevel;
-                    deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery set from cmd ${cmd}: ${batteryLevel}%`);
-                    updateBatteryUI();
-                } else {
-                    debug(`Battery from cmd ${cmd}: ${batteryLevel}% (ignored - recent EVENT #63 update)`);
-                }
-            } else {
-                debug('Could not parse battery level from response');
+            if (data.length >= 4) {
+                // 16-bit LE at offset 2, divided by 10, floor to match Whoop
+                const rawBattery = data[2] | (data[3] << 8);
+                const batteryLevel = Math.floor(rawBattery / 10);
+                deviceStatus.batteryLevel = batteryLevel;
+                deviceStatus.lastBatteryUpdate = Date.now();
+                debug(`Battery: ${batteryLevel}%`);
+                updateBatteryUI();
             }
         }
 
