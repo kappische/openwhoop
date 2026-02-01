@@ -2875,35 +2875,58 @@
             }
             debug(`Battery candidates: ${candidates.join(', ')}`);
 
-            // PRIMARY: Calculate from voltage (bytes 14-15 in mV, little endian)
-            // Voltage is the most reliable indicator - byte positions vary but voltage is stable
-            // Calibrated formula based on: 3868mV = 49% (from official app)
-            // Assuming: 4200mV = 100% (full), 3549mV = 0% (empty)
-            if (data.length >= 16) {
-                const voltage = data[14] | (data[15] << 8);
-                if (voltage > 3400 && voltage < 4300) {
-                    // Calibrated Whoop battery curve
-                    const pct = Math.round(((voltage - 3549) / 651) * 100);
-                    const clampedPct = Math.max(0, Math.min(100, pct));
-                    debug(`Battery from voltage: ${voltage}mV = ${clampedPct}%`);
-                    deviceStatus.batteryLevel = clampedPct;
+            // FIRST: Try to find direct percentage bytes (device may send calculated %)
+            // Check common offsets where battery percentage might be sent directly
+            for (let i = 4; i < Math.min(data.length, 12); i++) {
+                if (data[i] > 0 && data[i] <= 100) {
+                    const pct = data[i];
+                    debug(`Battery from EVENT #63 byte ${i}: ${pct}%`);
+                    deviceStatus.batteryLevel = pct;
                     deviceStatus.lastBatteryUpdate = Date.now();
                     updateBatteryUI();
                     return;
                 }
             }
 
-            // Fallback: first valid percentage after timestamp (less reliable)
-            for (let i = 4; i < data.length; i++) {
-                if (data[i] > 0 && data[i] <= 100) {
-                    const pct = data[i];
+            // FALLBACK: Calculate from voltage using non-linear Li-ion discharge curve
+            // Bytes 14-15 typically contain voltage in mV (little endian)
+            if (data.length >= 16) {
+                const voltage = data[14] | (data[15] << 8);
+                if (voltage > 3400 && voltage < 4300) {
+                    const pct = voltageToPercent(voltage);
+                    debug(`Battery from voltage: ${voltage}mV = ${pct}%`);
                     deviceStatus.batteryLevel = pct;
                     deviceStatus.lastBatteryUpdate = Date.now();
-                    debug(`Battery from EVENT #63 (fallback): ${pct}% (offset ${i})`);
                     updateBatteryUI();
                     return;
                 }
             }
+        }
+
+        // Li-ion battery voltage to percentage (non-linear discharge curve)
+        function voltageToPercent(mV) {
+            // Typical Li-ion discharge curve lookup table
+            // Values based on 3.7V nominal Li-ion cell (4.2V max, 3.0V min)
+            const curve = [
+                [4200, 100], [4150, 95], [4110, 90], [4080, 85],
+                [4020, 80], [3980, 75], [3950, 70], [3910, 65],
+                [3870, 60], [3850, 55], [3840, 50], [3820, 45],
+                [3800, 40], [3790, 35], [3770, 30], [3750, 25],
+                [3730, 20], [3710, 15], [3690, 10], [3610, 5],
+                [3270, 0]
+            ];
+
+            // Find the two points to interpolate between
+            for (let i = 0; i < curve.length - 1; i++) {
+                if (mV >= curve[i + 1][0]) {
+                    const [v1, p1] = curve[i];
+                    const [v2, p2] = curve[i + 1];
+                    // Linear interpolation between the two points
+                    const pct = p2 + (p1 - p2) * (mV - v2) / (v1 - v2);
+                    return Math.round(Math.max(0, Math.min(100, pct)));
+                }
+            }
+            return mV > 4200 ? 100 : 0;
         }
 
         // Handle battery level command response (cmd 26 or 98)
