@@ -2866,9 +2866,9 @@
             debug(`═══ BATTERY EVENT #63 ANALYSIS ═══`);
             debug(`Raw hex: ${Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
 
-            // Show ALL bytes for analysis
+            // Show ALL bytes for analysis (full packet)
             const allBytes = [];
-            for (let i = 0; i < Math.min(data.length, 20); i++) {
+            for (let i = 0; i < data.length; i++) {
                 allBytes.push(`[${i}]=${data[i]}`);
             }
             debug(`All bytes: ${allBytes.join(', ')}`);
@@ -2882,7 +2882,7 @@
 
             // Show all values that could be battery % (0-100 range)
             const candidates = [];
-            for (let i = 0; i < Math.min(data.length, 20); i++) {
+            for (let i = 0; i < data.length; i++) {
                 if (data[i] >= 0 && data[i] <= 100) {
                     candidates.push(`byte${i}=${data[i]}%`);
                 }
@@ -2890,10 +2890,20 @@
             debug(`Possible %: ${candidates.join(', ')}`);
             debug(`═══ Compare with Whoop app now! ═══`);
 
-            // Byte 5 confirmed as correct SoC from fuel gauge (matches Whoop app)
+            // Try byte 5 first (works when charging or recently charged)
             if (data.length >= 6 && data[5] >= 1 && data[5] <= 100) {
                 const pct = data[5];
-                debug(`Battery SoC: ${pct}%`);
+                debug(`Battery SoC (byte 5): ${pct}%`);
+                deviceStatus.batteryLevel = pct;
+                deviceStatus.lastBatteryUpdate = Date.now();
+                updateBatteryUI();
+                return;
+            }
+
+            // Try byte 28 (works in other states)
+            if (data.length >= 29 && data[28] >= 1 && data[28] <= 100) {
+                const pct = data[28];
+                debug(`Battery SoC (byte 28): ${pct}%`);
                 deviceStatus.batteryLevel = pct;
                 deviceStatus.lastBatteryUpdate = Date.now();
                 updateBatteryUI();
