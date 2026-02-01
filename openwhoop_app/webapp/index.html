@@ -709,6 +709,19 @@
             font-size: 18px;
             margin-right: 8px;
         }
+        .clear-schedules-btn {
+            width: 100%;
+            padding: 12px;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 12px;
+            cursor: pointer;
+            margin-top: 8px;
+        }
+        .clear-schedules-btn:hover {
+            color: #ff6b6b;
+        }
 
         /* Schedule Complete Message */
         .schedule-complete {
@@ -1382,6 +1395,11 @@
             <!-- Add Schedule Button -->
             <button class="add-schedule-btn" onclick="showAddScheduleModal()">
                 <span>+</span> Add Wake Time
+            </button>
+
+            <!-- Clear Schedules Link -->
+            <button class="clear-schedules-btn" onclick="clearAllSchedules()">
+                Clear All Schedules
             </button>
 
             <!-- Schedule Complete Message -->
@@ -3686,6 +3704,26 @@
                     updateAlarmStatus(null);
                 }
             }
+        }
+
+        async function clearAllSchedules() {
+            if (!confirm('Clear all wake time schedules?')) return;
+
+            schedules = [];
+            nextScheduleId = 1;
+            renderScheduleList();
+            saveToStorage();
+
+            // Disable alarm on device
+            if (cmdChar) {
+                try {
+                    await cmdChar.writeValueWithoutResponse(disableAlarmCmd());
+                    debug('All schedules cleared, alarm disabled on device');
+                } catch (e) {
+                    debug('Failed to disable alarm: ' + e);
+                }
+            }
+            updateAlarmStatus(null);
         }
 
         function getNextScheduledAlarmFromSchedules() {
