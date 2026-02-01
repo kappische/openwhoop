@@ -1821,9 +1821,9 @@
         const startRawData = () => createPacket(35, 0, CMD.START_RAW_DATA, [0x01]);
         const stopRawData = () => createPacket(35, 0, CMD.STOP_RAW_DATA, [0x00]);
 
-        // Battery level commands
-        const getBatteryLevel = () => createPacket(35, 0, CMD.GET_BATTERY_LEVEL, []);
-        const getExtendedBatteryInfo = () => createPacket(35, 0, CMD.GET_EXTENDED_BATTERY, []);
+        // Battery level commands (whoomp sends 0x00 as data)
+        const getBatteryLevel = () => createPacket(35, 0, CMD.GET_BATTERY_LEVEL, [0x00]);
+        const getExtendedBatteryInfo = () => createPacket(35, 0, CMD.GET_EXTENDED_BATTERY, [0x00]);
 
         // Parse historical packet (type 47) - extracts timestamp, BPM, RR intervals, activity
         // Each reading is 28 bytes in the packet
