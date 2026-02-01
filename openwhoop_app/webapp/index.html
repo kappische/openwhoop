@@ -3060,6 +3060,7 @@
         }
 
         // Parse temperature event data
+        // Only uses sleep-time readings (10pm - 8am) for nightly temperature like Whoop
         function handleTemperatureEvent(data) {
             if (data.length < 5) return;
 
@@ -3099,28 +3100,39 @@
 
             if (tempValue !== null && tempValue > 20 && tempValue < 45) {
                 const now = Date.now();
-                sensorData.temperatureReadings.push({ time: now, value: tempValue });
+                const hour = new Date(now).getHours();
 
-                // Keep last 100 readings
-                if (sensorData.temperatureReadings.length > 100) {
-                    sensorData.temperatureReadings.shift();
+                // Only use sleep-time readings (10pm - 8am) like Whoop
+                const isSleepTime = hour >= 22 || hour < 8;
+
+                if (isSleepTime) {
+                    sensorData.temperatureReadings.push({ time: now, value: tempValue, isSleep: true });
+
+                    // Keep last 100 sleep readings
+                    if (sensorData.temperatureReadings.length > 100) {
+                        sensorData.temperatureReadings.shift();
+                    }
+
+                    // Establish baseline from sleep readings (need at least 5)
+                    const sleepReadings = sensorData.temperatureReadings.filter(r => r.isSleep);
+                    if (sensorData.baselineTemp === null && sleepReadings.length >= 5) {
+                        sensorData.baselineTemp = sleepReadings.reduce((a, b) => a + b.value, 0) / sleepReadings.length;
+                        debug(`Temperature baseline established from sleep: ${sensorData.baselineTemp.toFixed(2)}°C`);
+                        saveToStorage(); // Persist baseline
+                    }
+
+                    // Update UI with deviation from baseline
+                    if (sensorData.baselineTemp !== null) {
+                        const deviation = tempValue - sensorData.baselineTemp;
+                        updateTemperatureUI(deviation);
+                        sensorData.lastTempUpdate = now;
+                    }
+
+                    debug(`Sleep temp: ${tempValue.toFixed(2)}°C`);
+                } else {
+                    // Daytime - just log, don't use for nightly calculation
+                    debug(`Temp (daytime, ignored): ${tempValue.toFixed(2)}°C`);
                 }
-
-                // Establish baseline from first readings
-                if (sensorData.baselineTemp === null && sensorData.temperatureReadings.length >= 5) {
-                    const firstReadings = sensorData.temperatureReadings.slice(0, 5);
-                    sensorData.baselineTemp = firstReadings.reduce((a, b) => a + b.value, 0) / 5;
-                    debug(`Temperature baseline established: ${sensorData.baselineTemp.toFixed(2)}°C`);
-                }
-
-                // Update UI with deviation from baseline
-                if (sensorData.baselineTemp !== null) {
-                    const deviation = tempValue - sensorData.baselineTemp;
-                    updateTemperatureUI(deviation);
-                    sensorData.lastTempUpdate = now;
-                }
-
-                debug(`Temperature: ${tempValue.toFixed(2)}°C (raw event data)`);
             } else {
                 // Log raw data for analysis
                 const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
@@ -4220,7 +4232,8 @@
                 weeklySchedule,
                 schedules,
                 globalAlarmEnabled,
-                nextScheduleId
+                nextScheduleId,
+                temperatureBaseline: sensorData.baselineTemp
             }));
         }
 
@@ -4252,6 +4265,11 @@
                 }
                 if (data.nextScheduleId) {
                     nextScheduleId = data.nextScheduleId;
+                }
+                // Load temperature baseline
+                if (data.temperatureBaseline !== undefined && data.temperatureBaseline !== null) {
+                    sensorData.baselineTemp = data.temperatureBaseline;
+                    debug(`Loaded temperature baseline: ${sensorData.baselineTemp.toFixed(2)}°C`);
                 }
                 // Update toggle state
                 const toggle = document.getElementById('alarm-toggle');
