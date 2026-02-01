@@ -3764,6 +3764,13 @@
 
         function updateAlarmStatus(alarm, fromDevice = false) {
             const statusBox = document.getElementById('alarm-status');
+            // Status box may not exist in new schedule UI - just log instead
+            if (!statusBox) {
+                if (alarm) {
+                    debug(`Next alarm: ${alarm.toLocaleString()}`);
+                }
+                return;
+            }
             if (alarm) {
                 const timeStr = alarm.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
                 const dayStr = dayAbbrev[alarm.getDay()];
