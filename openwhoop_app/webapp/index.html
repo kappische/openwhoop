@@ -534,6 +534,46 @@
             margin-top: 2px;
         }
 
+        /* Device Alarm Status */
+        .device-alarm-status {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 12px 16px;
+            background: var(--card);
+            border-radius: 12px;
+            margin-bottom: 16px;
+        }
+        .device-alarm-status.active {
+            background: linear-gradient(135deg, rgba(0, 230, 118, 0.15), rgba(0, 230, 118, 0.05));
+            border: 1px solid rgba(0, 230, 118, 0.3);
+        }
+        .device-alarm-status.warning {
+            background: linear-gradient(135deg, rgba(255, 170, 0, 0.15), rgba(255, 170, 0, 0.05));
+            border: 1px solid rgba(255, 170, 0, 0.3);
+        }
+        .device-alarm-icon {
+            font-size: 18px;
+        }
+        .device-alarm-text {
+            flex: 1;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        .device-alarm-status.active .device-alarm-text {
+            color: var(--green);
+        }
+        .sync-btn {
+            padding: 6px 14px;
+            background: var(--green);
+            border: none;
+            border-radius: 16px;
+            color: black;
+            font-size: 12px;
+            font-weight: 600;
+            cursor: pointer;
+        }
+
         /* Schedule Header */
         .schedule-header {
             display: flex;
@@ -1381,6 +1421,13 @@
 
         <!-- Alarm Tab -->
         <div class="tab-content" id="tab-alarm">
+            <!-- Device Alarm Status -->
+            <div class="device-alarm-status" id="device-alarm-status">
+                <span class="device-alarm-icon">⏰</span>
+                <span class="device-alarm-text" id="device-alarm-text">No alarm on device</span>
+                <button class="sync-btn" id="sync-alarm-btn" onclick="syncScheduleToDevice()" style="display: none;">Sync</button>
+            </div>
+
             <!-- Schedule Header -->
             <div class="schedule-header">
                 <div class="schedule-title">MY SCHEDULE</div>
@@ -3463,6 +3510,7 @@
                 }
                 updateAlarmStatus(null);
                 deviceAlarm = null;
+                updateDeviceAlarmUI(null);
             } else if (globalAlarmEnabled) {
                 // Re-enable next scheduled alarm
                 const nextAlarm = getNextScheduledAlarmFromSchedules();
@@ -3472,6 +3520,7 @@
                     } else {
                         debug('Schedule enabled (will sync when connected)');
                         updateAlarmStatus(nextAlarm);
+                        updateDeviceAlarmUI(null); // Not synced yet
                     }
                 }
             }
@@ -3718,12 +3767,14 @@
             if (cmdChar) {
                 try {
                     await cmdChar.writeValueWithoutResponse(disableAlarmCmd());
+                    deviceAlarm = null;
                     debug('All schedules cleared, alarm disabled on device');
                 } catch (e) {
                     debug('Failed to disable alarm: ' + e);
                 }
             }
             updateAlarmStatus(null);
+            updateDeviceAlarmUI(null);
         }
 
         function getNextScheduledAlarmFromSchedules() {
@@ -3844,12 +3895,65 @@
                         alarmEnabled = true;
                         document.getElementById('alarm-toggle').classList.add('active');
                         updateAlarmStatus(deviceAlarm, true);
+                        updateDeviceAlarmUI(deviceAlarm);
                     } else {
                         deviceAlarm = null;
+                        updateDeviceAlarmUI(null);
                     }
                 } else {
                     deviceAlarm = null;
+                    updateDeviceAlarmUI(null);
                 }
+            }
+        }
+
+        // Update the device alarm status display
+        function updateDeviceAlarmUI(alarm) {
+            const statusEl = document.getElementById('device-alarm-status');
+            const textEl = document.getElementById('device-alarm-text');
+            const syncBtn = document.getElementById('sync-alarm-btn');
+
+            if (!statusEl || !textEl) return;
+
+            const nextScheduled = getNextScheduledAlarmFromSchedules();
+
+            if (alarm) {
+                const timeStr = alarm.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+                const dayStr = dayAbbrev[alarm.getDay()];
+                textEl.textContent = `Device alarm: ${dayStr} ${timeStr}`;
+                statusEl.classList.add('active');
+                statusEl.classList.remove('warning');
+                syncBtn.style.display = 'none';
+            } else {
+                // No alarm on device
+                if (nextScheduled && globalAlarmEnabled && schedules.length > 0) {
+                    // We have schedules but device has no alarm - show warning
+                    textEl.textContent = 'No alarm on device (schedules not synced)';
+                    statusEl.classList.remove('active');
+                    statusEl.classList.add('warning');
+                    syncBtn.style.display = 'block';
+                } else {
+                    textEl.textContent = 'No alarm on device';
+                    statusEl.classList.remove('active', 'warning');
+                    syncBtn.style.display = 'none';
+                }
+            }
+        }
+
+        // Sync our next scheduled alarm to the device
+        async function syncScheduleToDevice() {
+            if (!cmdChar) {
+                showError('Not connected');
+                return;
+            }
+
+            const nextAlarm = getNextScheduledAlarmFromSchedules();
+            if (nextAlarm) {
+                await doSetAlarm(nextAlarm);
+                updateDeviceAlarmUI(nextAlarm);
+                debug('Schedule synced to device');
+            } else {
+                showError('No schedules to sync');
             }
         }
 
@@ -3882,6 +3986,7 @@
                 alarmEnabled = true;
                 document.getElementById('alarm-toggle').classList.add('active');
                 updateAlarmStatus(alarmDate);
+                updateDeviceAlarmUI(alarmDate);
                 saveToStorage();
                 debug(`Alarm set for ${alarmDate.toLocaleString()}`);
             } catch (e) {
