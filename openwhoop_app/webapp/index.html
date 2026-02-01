@@ -2575,7 +2575,7 @@
                 deviceStatus.onWrist = true;
                 updateWristUI();
 
-                // Set up periodic battery level refresh (every 5 minutes)
+                // Set up periodic battery level refresh (every 30 seconds, like whoomp)
                 setInterval(async () => {
                     if (cmdChar) {
                         try {
@@ -2584,7 +2584,7 @@
                             debug('Battery refresh failed: ' + e.message);
                         }
                     }
-                }, 5 * 60 * 1000);
+                }, 30 * 1000);
 
                 // Set up periodic alarm refresh - push next alarm when current one passes (every minute)
                 setInterval(async () => {
