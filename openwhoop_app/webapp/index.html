@@ -2890,20 +2890,10 @@
             debug(`Possible %: ${candidates.join(', ')}`);
             debug(`═══ Compare with Whoop app now! ═══`);
 
-            // Try byte 5 first (works when charging or recently charged)
-            if (data.length >= 6 && data[5] >= 1 && data[5] <= 100) {
-                const pct = data[5];
-                debug(`Battery SoC (byte 5): ${pct}%`);
-                deviceStatus.batteryLevel = pct;
-                deviceStatus.lastBatteryUpdate = Date.now();
-                updateBatteryUI();
-                return;
-            }
-
-            // Try byte 28 (works in other states)
-            if (data.length >= 29 && data[28] >= 1 && data[28] <= 100) {
-                const pct = data[28];
-                debug(`Battery SoC (byte 28): ${pct}%`);
+            // Byte 16 is the battery SoC percentage
+            if (data.length >= 17 && data[16] >= 1 && data[16] <= 100) {
+                const pct = data[16];
+                debug(`Battery SoC (byte 16): ${pct}%`);
                 deviceStatus.batteryLevel = pct;
                 deviceStatus.lastBatteryUpdate = Date.now();
                 updateBatteryUI();
