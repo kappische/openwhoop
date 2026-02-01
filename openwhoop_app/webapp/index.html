@@ -534,28 +534,388 @@
             margin-top: 2px;
         }
 
-        /* Schedule List */
-        .schedule-list {
-            margin-top: 16px;
-        }
-        .schedule-item {
+        /* Schedule Header */
+        .schedule-header {
             display: flex;
             justify-content: space-between;
             align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid var(--border);
+            padding: 16px 0;
         }
-        .schedule-item:last-child { border-bottom: none; }
-        .schedule-day {
+        .schedule-title {
             font-size: 14px;
-            font-weight: 500;
-        }
-        .schedule-time {
-            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 1px;
             color: var(--text-secondary);
         }
-        .schedule-time.set {
+
+        /* Schedule List - Whoop Style */
+        .schedule-list {
+            margin-top: 8px;
+        }
+        .schedule-card {
+            background: var(--card);
+            border-radius: 16px;
+            margin-bottom: 12px;
+            overflow: hidden;
+            transition: opacity 0.2s;
+        }
+        .schedule-card.disabled {
+            opacity: 0.5;
+        }
+        .schedule-card-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 16px 20px;
+            cursor: pointer;
+        }
+        .schedule-card-info {
+            flex: 1;
+        }
+        .schedule-card-main {
+            padding: 16px 20px;
+            cursor: pointer;
+        }
+        .schedule-card-days {
+            font-size: 11px;
+            font-weight: 600;
+            color: var(--text-secondary);
+            letter-spacing: 1px;
+            margin-bottom: 4px;
+        }
+        .schedule-card-time {
+            font-size: 32px;
+            font-weight: 300;
+        }
+        .schedule-card-right {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .schedule-mode-badge {
+            padding: 4px 10px;
+            background: var(--card-light);
+            border-radius: 12px;
+            font-size: 10px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            color: var(--text-secondary);
+        }
+        .schedule-toggle {
+            width: 44px;
+            height: 26px;
+            background: var(--border);
+            border-radius: 13px;
+            position: relative;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        .schedule-toggle::after {
+            content: '';
+            position: absolute;
+            width: 22px;
+            height: 22px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: transform 0.2s;
+        }
+        .schedule-toggle.active {
+            background: var(--green);
+        }
+        .schedule-toggle.active::after {
+            transform: translateX(18px);
+        }
+        .schedule-card-mode {
+            display: inline-flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 12px;
+            background: var(--card-light);
+            border-radius: 20px;
+            font-size: 11px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+        }
+        .schedule-card-mode .mode-icon {
+            font-size: 14px;
+        }
+        .schedule-card-arrow {
+            float: right;
+            margin-top: -40px;
+            font-size: 20px;
+            color: var(--text-secondary);
+            transition: transform 0.2s;
+        }
+        .schedule-card.expanded .schedule-card-arrow {
+            transform: rotate(180deg);
+        }
+        .schedule-card-actions {
+            display: none;
+            border-top: 1px solid var(--border);
+        }
+        .schedule-card.expanded .schedule-card-actions {
+            display: flex;
+        }
+        .schedule-action-btn {
+            flex: 1;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 14px;
+            background: transparent;
+            border: none;
+            color: var(--text-secondary);
+            font-size: 13px;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .schedule-action-btn:first-child {
+            border-right: 1px solid var(--border);
+        }
+        .schedule-action-btn:hover {
+            color: white;
+        }
+        .schedule-action-btn.delete:hover {
+            color: #ff4444;
+        }
+        .no-schedules {
+            text-align: center;
+            color: var(--text-secondary);
+            padding: 20px;
+            font-size: 14px;
+        }
+
+        /* Add Schedule Button */
+        .add-schedule-btn {
+            width: 100%;
+            padding: 16px;
+            background: var(--card);
+            border: 2px dashed var(--border);
+            border-radius: 16px;
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 500;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .add-schedule-btn:hover {
+            border-color: var(--green);
             color: var(--green);
+        }
+        .add-schedule-btn span {
+            font-size: 18px;
+            margin-right: 8px;
+        }
+
+        /* Schedule Complete Message */
+        .schedule-complete {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            padding: 16px;
+            color: var(--green);
+            font-size: 14px;
+            margin-top: 16px;
+        }
+        .complete-icon {
+            width: 24px;
+            height: 24px;
+            background: var(--green);
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: black;
+            font-size: 14px;
+            font-weight: bold;
+        }
+
+        /* Modal Overlay */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 1000;
+            display: flex;
+            align-items: flex-end;
+            justify-content: center;
+        }
+        .modal-content {
+            width: 100%;
+            max-width: 500px;
+            max-height: 80vh;
+            background: linear-gradient(180deg, #1a2a3a 0%, #0d1821 100%);
+            border-radius: 24px 24px 0 0;
+            overflow: hidden;
+        }
+        .modal-header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px;
+            border-bottom: 1px solid var(--border);
+        }
+        .modal-header span {
+            font-size: 12px;
+            font-weight: 600;
+            letter-spacing: 1px;
+        }
+        .modal-back, .modal-info {
+            width: 36px;
+            height: 36px;
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 24px;
+            cursor: pointer;
+        }
+        .modal-info {
+            font-size: 18px;
+            color: var(--text-secondary);
+        }
+        .modal-body {
+            padding: 30px 20px;
+            text-align: center;
+        }
+        .modal-icon {
+            font-size: 32px;
+            margin-bottom: 16px;
+            color: var(--text-secondary);
+        }
+        .modal-hint {
+            color: var(--text-secondary);
+            font-size: 14px;
+            margin-bottom: 30px;
+            line-height: 1.5;
+        }
+        .modal-hint-small {
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-top: 8px;
+        }
+
+        /* Large Day Selector */
+        .day-selector-large {
+            display: flex;
+            gap: 8px;
+            justify-content: center;
+        }
+        .day-btn-large {
+            width: 44px;
+            height: 44px;
+            border-radius: 8px;
+            background: var(--card-light);
+            border: 2px solid var(--border);
+            color: var(--text-secondary);
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .day-btn-large.active,
+        .day-btn-large.selected {
+            background: white;
+            border-color: white;
+            color: black;
+        }
+        .day-btn-large.has-schedule {
+            position: relative;
+        }
+        .day-btn-large.has-schedule::after {
+            content: '';
+            position: absolute;
+            bottom: -8px;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 4px;
+            height: 4px;
+            background: var(--text-secondary);
+            border-radius: 50%;
+        }
+
+        /* Mode Options */
+        .mode-option {
+            width: 100%;
+            padding: 20px;
+            background: var(--card);
+            border: none;
+            border-radius: 12px;
+            margin-bottom: 12px;
+            text-align: left;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .mode-option:hover {
+            background: var(--card-light);
+        }
+        .mode-option-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: white;
+            margin-bottom: 4px;
+        }
+        .mode-option-desc {
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+        .no-alarm-link {
+            display: inline-block;
+            margin-top: 20px;
+            background: transparent;
+            border: none;
+            color: white;
+            font-size: 13px;
+            font-weight: 600;
+            letter-spacing: 0.5px;
+            cursor: pointer;
+        }
+
+        /* Modal Next Button */
+        .modal-next-btn {
+            width: calc(100% - 40px);
+            margin: 20px;
+            padding: 16px;
+            background: transparent;
+            border: 2px solid white;
+            border-radius: 30px;
+            color: white;
+            font-size: 14px;
+            font-weight: 600;
+            letter-spacing: 1px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        .modal-next-btn:hover {
+            background: white;
+            color: black;
+        }
+
+        /* Time Input Large */
+        .time-input-large {
+            width: 200px;
+            padding: 16px;
+            background: var(--card);
+            border: 2px solid var(--border);
+            border-radius: 12px;
+            color: white;
+            font-size: 32px;
+            text-align: center;
+        }
+        .time-display-large {
+            font-size: 64px;
+            font-weight: 300;
+            margin: 20px 0;
+        }
+
+        .modal-step.hidden {
+            display: none;
         }
 
         /* Confirmation Modal */
@@ -1004,85 +1364,30 @@
 
         <!-- Alarm Tab -->
         <div class="tab-content" id="tab-alarm">
-            <!-- Main Alarm Card -->
-            <div class="alarm-card">
-                <div class="alarm-header">
-                    <div class="alarm-title">Haptic Alarm</div>
-                    <div class="alarm-toggle" id="alarm-toggle" onclick="toggleAlarm()"></div>
-                </div>
+            <!-- Schedule Header -->
+            <div class="schedule-header">
+                <div class="schedule-title">MY SCHEDULE</div>
+                <div class="alarm-toggle" id="alarm-toggle" onclick="toggleGlobalAlarm()"></div>
+            </div>
 
-                <!-- Alarm Mode Selector -->
-                <div class="mode-selector">
-                    <button class="mode-btn active" data-mode="exact" onclick="setAlarmMode('exact')">Exact Time</button>
-                    <button class="mode-btn" data-mode="sleep" onclick="setAlarmMode('sleep')">Sleep Goal</button>
-                    <button class="mode-btn" data-mode="schedule" onclick="setAlarmMode('schedule')">Schedule</button>
-                </div>
+            <!-- Schedule List -->
+            <div class="schedule-list" id="schedule-list">
+                <!-- Generated by JS -->
+            </div>
 
-                <!-- Day Selector (shown in exact and schedule modes) -->
-                <div class="day-selector" id="day-selector">
-                    <button class="day-btn" data-day="0" onclick="selectDay(0)">S</button>
-                    <button class="day-btn" data-day="1" onclick="selectDay(1)">M</button>
-                    <button class="day-btn" data-day="2" onclick="selectDay(2)">T</button>
-                    <button class="day-btn" data-day="3" onclick="selectDay(3)">W</button>
-                    <button class="day-btn" data-day="4" onclick="selectDay(4)">T</button>
-                    <button class="day-btn" data-day="5" onclick="selectDay(5)">F</button>
-                    <button class="day-btn" data-day="6" onclick="selectDay(6)">S</button>
-                </div>
+            <!-- Add Schedule Button -->
+            <button class="add-schedule-btn" onclick="showAddScheduleModal()">
+                <span>+</span> Add Wake Time
+            </button>
 
-                <!-- Exact Time Mode -->
-                <div id="mode-exact" class="alarm-mode-content">
-                    <div class="time-display" id="exact-time-display">7:00 AM</div>
-                    <input type="time" class="alarm-time-input" id="alarm-time" value="07:00" onchange="updateTimeDisplay()">
-                </div>
-
-                <!-- Sleep Goal Mode -->
-                <div id="mode-sleep" class="alarm-mode-content hidden">
-                    <div class="sleep-goal-selector">
-                        <button class="goal-btn" data-goal="100" onclick="setSleepGoal(100)">
-                            <span class="goal-percent">100%</span>
-                            <span class="goal-label">Peak</span>
-                        </button>
-                        <button class="goal-btn active" data-goal="85" onclick="setSleepGoal(85)">
-                            <span class="goal-percent">85%</span>
-                            <span class="goal-label">Perform</span>
-                        </button>
-                        <button class="goal-btn" data-goal="70" onclick="setSleepGoal(70)">
-                            <span class="goal-percent">70%</span>
-                            <span class="goal-label">Get By</span>
-                        </button>
-                    </div>
-                    <div class="sleep-info-row">
-                        <span>Sleep Need</span>
-                        <span id="sleep-need-display">8h 0m</span>
-                    </div>
-                    <div class="sleep-info-row">
-                        <span>Latest Wake</span>
-                        <input type="time" class="time-input-small" id="latest-wake" value="07:00" onchange="updateSleepCalc()">
-                    </div>
-                    <div class="sleep-info-row highlight">
-                        <span>Suggested Bedtime</span>
-                        <span id="bedtime-display">11:00 PM</span>
-                    </div>
-                </div>
-
-                <!-- Schedule Mode - Weekly Overview -->
-                <div id="mode-schedule" class="alarm-mode-content hidden">
-                    <div class="schedule-list" id="schedule-list">
-                        <!-- Generated by JS -->
-                    </div>
-                </div>
-
-                <!-- Alarm Status -->
-                <div class="alarm-status-box" id="alarm-status">
-                    <span class="status-icon">⏰</span>
-                    <span class="status-text">No alarm set</span>
-                </div>
-
-                <button class="connect-btn" style="width: 100%;" onclick="setAlarm()">Set Alarm</button>
+            <!-- Schedule Complete Message -->
+            <div class="schedule-complete" id="schedule-complete" style="display: none;">
+                <span class="complete-icon">✓</span>
+                <span>Your schedule is complete</span>
             </div>
 
             <!-- Nap Timer -->
-            <div class="alarm-card">
+            <div class="alarm-card" style="margin-top: 20px;">
                 <div class="alarm-title" style="margin-bottom: 16px;">Nap Timer</div>
                 <div class="alarm-presets">
                     <button class="preset-btn" onclick="quickAlarm(10)">10m</button>
@@ -1100,6 +1405,95 @@
                 <p style="text-align: center; color: var(--text-secondary); font-size: 11px; margin-top: 12px;">
                     Double-tap your WHOOP to dismiss alarm
                 </p>
+            </div>
+        </div>
+
+        <!-- Add/Edit Schedule Modal -->
+        <div class="modal-overlay" id="schedule-modal" style="display: none;">
+            <div class="modal-content">
+                <!-- Step 1: Day Selection -->
+                <div class="modal-step" id="modal-step-days">
+                    <div class="modal-header">
+                        <button class="modal-back" onclick="closeScheduleModal()">‹</button>
+                        <span>SELECT DAYS WITH REPEAT WAKE TIMES</span>
+                        <button class="modal-info">ⓘ</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="modal-icon">∿</div>
+                        <p class="modal-hint">A consistent sleep schedule can help improve your sleep performance</p>
+                        <div class="day-selector-large">
+                            <button class="day-btn-large" data-day="1" onclick="toggleScheduleDay(1)">M</button>
+                            <button class="day-btn-large" data-day="2" onclick="toggleScheduleDay(2)">T</button>
+                            <button class="day-btn-large" data-day="3" onclick="toggleScheduleDay(3)">W</button>
+                            <button class="day-btn-large" data-day="4" onclick="toggleScheduleDay(4)">T</button>
+                            <button class="day-btn-large" data-day="5" onclick="toggleScheduleDay(5)">F</button>
+                            <button class="day-btn-large" data-day="6" onclick="toggleScheduleDay(6)">S</button>
+                            <button class="day-btn-large" data-day="0" onclick="toggleScheduleDay(0)">S</button>
+                        </div>
+                    </div>
+                    <button class="modal-next-btn" onclick="goToModeStep()">NEXT</button>
+                </div>
+
+                <!-- Step 2: Alarm Mode Selection -->
+                <div class="modal-step hidden" id="modal-step-mode">
+                    <div class="modal-header">
+                        <button class="modal-back" onclick="goToDaysStep()">‹</button>
+                        <span>CHOOSE ALARM MODE</span>
+                        <button class="modal-info">ⓘ</button>
+                    </div>
+                    <div class="modal-body">
+                        <button class="mode-option" onclick="selectAlarmMode('exact')">
+                            <div class="mode-option-title">EXACT TIME</div>
+                            <div class="mode-option-desc">Wake up at a specific time.</div>
+                        </button>
+                        <button class="mode-option" onclick="selectAlarmMode('sleep')">
+                            <div class="mode-option-title">SLEEP GOAL</div>
+                            <div class="mode-option-desc">Wake up once you've hit your sleep goal.</div>
+                        </button>
+                        <button class="mode-option" onclick="selectAlarmMode('green')">
+                            <div class="mode-option-title">IN THE GREEN</div>
+                            <div class="mode-option-desc">Wake up once you've achieved a green Recovery.</div>
+                        </button>
+                        <button class="no-alarm-link" onclick="closeScheduleModal()">
+                            DON'T USE AN ALARM →
+                        </button>
+                        <p class="modal-hint-small">Get bed and wake time recommendations without being woken up by an alarm.</p>
+                    </div>
+                </div>
+
+                <!-- Step 3: Time Selection -->
+                <div class="modal-step hidden" id="modal-step-time">
+                    <div class="modal-header">
+                        <button class="modal-back" onclick="goToModeStep()">‹</button>
+                        <span id="time-step-title">SET WAKE TIME</span>
+                        <button class="modal-info">ⓘ</button>
+                    </div>
+                    <div class="modal-body">
+                        <div class="time-picker-large">
+                            <input type="time" id="schedule-time-input" value="07:00" class="time-input-large">
+                        </div>
+                        <div class="time-display-large" id="schedule-time-display">07:00</div>
+
+                        <!-- Sleep Goal Options (shown when mode is sleep) -->
+                        <div id="sleep-goal-options" style="display: none;">
+                            <div class="sleep-goal-selector">
+                                <button class="goal-btn" data-goal="100" onclick="setScheduleSleepGoal(100)">
+                                    <span class="goal-percent">100%</span>
+                                    <span class="goal-label">Peak</span>
+                                </button>
+                                <button class="goal-btn active" data-goal="85" onclick="setScheduleSleepGoal(85)">
+                                    <span class="goal-percent">85%</span>
+                                    <span class="goal-label">Perform</span>
+                                </button>
+                                <button class="goal-btn" data-goal="70" onclick="setScheduleSleepGoal(70)">
+                                    <span class="goal-percent">70%</span>
+                                    <span class="goal-label">Get By</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                    <button class="modal-next-btn" onclick="saveSchedule()">SAVE</button>
+                </div>
             </div>
         </div>
 
@@ -2862,8 +3256,25 @@
         let pendingAlarmDate = null; // Alarm waiting for confirmation
         const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const dayAbbrev = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+        const dayLetters = ['S', 'M', 'T', 'W', 'T', 'F', 'S']; // For schedule cards
 
-        // Weekly schedule: { 0: "07:00", 1: "06:30", ... } - null means no alarm
+        // Multi-schedule system (like Whoop app)
+        // Each schedule: { id, days: [1,2,3,4,5], time: "06:30", mode: "exact"|"sleep"|"green", sleepGoal: 85, enabled: true }
+        let schedules = [
+            { id: 1, days: [1, 2, 3, 4], time: "06:30", mode: "exact", sleepGoal: 85, enabled: true },
+            { id: 2, days: [5], time: "06:20", mode: "exact", sleepGoal: 85, enabled: true },
+            { id: 3, days: [0, 6], time: "08:00", mode: "exact", sleepGoal: 85, enabled: true }
+        ];
+        let globalAlarmEnabled = true;
+        let nextScheduleId = 4;
+
+        // Modal state for adding/editing schedules
+        let editingScheduleId = null;
+        let modalSelectedDays = [];
+        let modalSelectedMode = 'exact';
+        let modalSleepGoal = 85;
+
+        // Legacy weekly schedule for backwards compatibility
         let weeklySchedule = {
             0: null, // Sunday
             1: "07:00", // Monday
@@ -2921,18 +3332,323 @@
 
         function renderScheduleList() {
             const list = document.getElementById('schedule-list');
-            list.innerHTML = dayNames.map((name, i) => {
-                const time = weeklySchedule[i];
-                const timeStr = time ? formatTime12h(time) : 'Off';
-                const isSet = time !== null;
+            if (!schedules || schedules.length === 0) {
+                list.innerHTML = '<div class="no-schedules">No wake times set</div>';
+                document.getElementById('schedule-complete').style.display = 'none';
+                return;
+            }
+
+            // Check if all days are covered
+            const coveredDays = new Set();
+            schedules.forEach(s => {
+                if (s.enabled) s.days.forEach(d => coveredDays.add(d));
+            });
+            const isComplete = coveredDays.size === 7;
+            document.getElementById('schedule-complete').style.display = isComplete ? 'flex' : 'none';
+
+            list.innerHTML = schedules.map(schedule => {
+                const daysLabel = formatDaysLabel(schedule.days);
+                const timeStr = formatTime12h(schedule.time);
+                const modeLabel = schedule.mode === 'exact' ? '' :
+                                  schedule.mode === 'sleep' ? 'SLEEP GOAL' : 'IN THE GREEN';
                 return `
-                    <div class="schedule-item">
-                        <span class="schedule-day">${name}</span>
-                        <span class="schedule-time ${isSet ? 'set' : ''}">${timeStr}</span>
+                    <div class="schedule-card ${schedule.enabled ? '' : 'disabled'}" data-id="${schedule.id}">
+                        <div class="schedule-card-header" onclick="toggleScheduleCard(${schedule.id})">
+                            <div class="schedule-card-info">
+                                <div class="schedule-card-days">${daysLabel}</div>
+                                <div class="schedule-card-time">${timeStr}</div>
+                            </div>
+                            <div class="schedule-card-right">
+                                ${modeLabel ? `<span class="schedule-mode-badge">${modeLabel}</span>` : ''}
+                                <div class="schedule-toggle ${schedule.enabled ? 'active' : ''}"
+                                     onclick="event.stopPropagation(); toggleScheduleEnabled(${schedule.id})"></div>
+                            </div>
+                        </div>
+                        <div class="schedule-card-actions" id="schedule-actions-${schedule.id}" style="display: none;">
+                            <button class="schedule-action-btn" onclick="editSchedule(${schedule.id})">Edit</button>
+                            <button class="schedule-action-btn delete" onclick="deleteSchedule(${schedule.id})">Delete</button>
+                        </div>
                     </div>
                 `;
             }).join('');
         }
+
+        function formatDaysLabel(days) {
+            if (days.length === 7) return 'EVERY DAY';
+            if (days.length === 0) return 'NO DAYS';
+
+            // Sort days starting from Monday (1)
+            const sorted = [...days].sort((a, b) => {
+                const aIdx = a === 0 ? 7 : a;
+                const bIdx = b === 0 ? 7 : b;
+                return aIdx - bIdx;
+            });
+
+            // Check for consecutive days
+            const dayOrder = [1, 2, 3, 4, 5, 6, 0]; // Mon-Sun order
+            const dayIndices = sorted.map(d => dayOrder.indexOf(d));
+
+            // Check if weekdays only
+            if (sorted.length === 5 && [1,2,3,4,5].every(d => sorted.includes(d))) return 'WEEKDAYS';
+            // Check if weekend only
+            if (sorted.length === 2 && sorted.includes(0) && sorted.includes(6)) return 'WEEKENDS';
+
+            // Format as ranges (e.g., "MON-THU" or "SAT-SUN")
+            const shortNames = ['SUN', 'MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT'];
+
+            // Check for consecutive range
+            let isConsecutive = true;
+            for (let i = 1; i < dayIndices.length; i++) {
+                if (dayIndices[i] !== dayIndices[i-1] + 1) {
+                    isConsecutive = false;
+                    break;
+                }
+            }
+
+            if (isConsecutive && sorted.length > 1) {
+                return `${shortNames[sorted[0]]}-${shortNames[sorted[sorted.length-1]]}`;
+            }
+
+            // Otherwise, list individual days
+            if (sorted.length <= 2) {
+                return sorted.map(d => shortNames[d]).join(', ');
+            }
+            return sorted.map(d => shortNames[d][0]).join(' ');
+        }
+
+        function toggleGlobalAlarm() {
+            globalAlarmEnabled = !globalAlarmEnabled;
+            document.getElementById('alarm-toggle').classList.toggle('active', globalAlarmEnabled);
+
+            if (!globalAlarmEnabled && cmdChar) {
+                cmdChar.writeValueWithoutResponse(disableAlarmCmd());
+                updateAlarmStatus(null);
+                deviceAlarm = null;
+            } else if (globalAlarmEnabled) {
+                // Re-enable next scheduled alarm
+                const nextAlarm = getNextScheduledAlarmFromSchedules();
+                if (nextAlarm && cmdChar) {
+                    doSetAlarm(nextAlarm);
+                }
+            }
+            saveToStorage();
+        }
+
+        function toggleScheduleEnabled(id) {
+            const schedule = schedules.find(s => s.id === id);
+            if (schedule) {
+                schedule.enabled = !schedule.enabled;
+                renderScheduleList();
+                saveToStorage();
+
+                // Update device alarm if needed
+                if (globalAlarmEnabled) {
+                    const nextAlarm = getNextScheduledAlarmFromSchedules();
+                    if (nextAlarm && cmdChar) {
+                        doSetAlarm(nextAlarm);
+                    }
+                }
+            }
+        }
+
+        function toggleScheduleCard(id) {
+            const actions = document.getElementById(`schedule-actions-${id}`);
+            const isVisible = actions.style.display !== 'none';
+
+            // Hide all other expanded cards
+            document.querySelectorAll('.schedule-card-actions').forEach(el => {
+                el.style.display = 'none';
+            });
+
+            actions.style.display = isVisible ? 'none' : 'flex';
+        }
+
+        function showAddScheduleModal() {
+            editingScheduleId = null;
+            modalSelectedDays = [];
+            modalSelectedMode = 'exact';
+            modalSleepGoal = 85;
+
+            // Reset UI
+            document.querySelectorAll('.day-btn-large').forEach(btn => {
+                btn.classList.remove('selected');
+            });
+            document.getElementById('schedule-time-input').value = '07:00';
+            document.getElementById('schedule-time-display').textContent = '07:00';
+            document.getElementById('sleep-goal-options').style.display = 'none';
+
+            // Show modal at step 1
+            showModalStep('days');
+            document.getElementById('schedule-modal').style.display = 'flex';
+        }
+
+        function closeScheduleModal() {
+            document.getElementById('schedule-modal').style.display = 'none';
+            editingScheduleId = null;
+        }
+
+        function showModalStep(step) {
+            document.querySelectorAll('.modal-step').forEach(el => el.classList.add('hidden'));
+            document.getElementById(`modal-step-${step}`).classList.remove('hidden');
+        }
+
+        function toggleScheduleDay(day) {
+            const btn = document.querySelector(`.day-btn-large[data-day="${day}"]`);
+            const idx = modalSelectedDays.indexOf(day);
+
+            if (idx >= 0) {
+                modalSelectedDays.splice(idx, 1);
+                btn.classList.remove('selected');
+            } else {
+                modalSelectedDays.push(day);
+                btn.classList.add('selected');
+            }
+        }
+
+        function goToModeStep() {
+            if (modalSelectedDays.length === 0) {
+                showError('Select at least one day');
+                return;
+            }
+            showModalStep('mode');
+        }
+
+        function goToDaysStep() {
+            showModalStep('days');
+        }
+
+        function selectAlarmMode(mode) {
+            modalSelectedMode = mode;
+
+            // Update title based on mode
+            const titles = {
+                'exact': 'SET WAKE TIME',
+                'sleep': 'SET LATEST WAKE TIME',
+                'green': 'SET LATEST WAKE TIME'
+            };
+            document.getElementById('time-step-title').textContent = titles[mode];
+
+            // Show/hide sleep goal options
+            document.getElementById('sleep-goal-options').style.display =
+                mode === 'sleep' ? 'block' : 'none';
+
+            showModalStep('time');
+        }
+
+        function setScheduleSleepGoal(goal) {
+            modalSleepGoal = goal;
+            document.querySelectorAll('.goal-btn').forEach(btn => {
+                btn.classList.toggle('active', parseInt(btn.dataset.goal) === goal);
+            });
+        }
+
+        function saveSchedule() {
+            const time = document.getElementById('schedule-time-input').value;
+
+            if (editingScheduleId) {
+                // Update existing schedule
+                const schedule = schedules.find(s => s.id === editingScheduleId);
+                if (schedule) {
+                    schedule.days = [...modalSelectedDays];
+                    schedule.time = time;
+                    schedule.mode = modalSelectedMode;
+                    schedule.sleepGoal = modalSleepGoal;
+                }
+            } else {
+                // Create new schedule
+                schedules.push({
+                    id: nextScheduleId++,
+                    days: [...modalSelectedDays],
+                    time: time,
+                    mode: modalSelectedMode,
+                    sleepGoal: modalSleepGoal,
+                    enabled: true
+                });
+            }
+
+            closeScheduleModal();
+            renderScheduleList();
+            saveToStorage();
+
+            // Set the next alarm on device
+            if (globalAlarmEnabled && cmdChar) {
+                const nextAlarm = getNextScheduledAlarmFromSchedules();
+                if (nextAlarm) {
+                    doSetAlarm(nextAlarm);
+                }
+            }
+        }
+
+        function editSchedule(id) {
+            const schedule = schedules.find(s => s.id === id);
+            if (!schedule) return;
+
+            editingScheduleId = id;
+            modalSelectedDays = [...schedule.days];
+            modalSelectedMode = schedule.mode;
+            modalSleepGoal = schedule.sleepGoal;
+
+            // Update UI to show current values
+            document.querySelectorAll('.day-btn-large').forEach(btn => {
+                const day = parseInt(btn.dataset.day);
+                btn.classList.toggle('selected', modalSelectedDays.includes(day));
+            });
+            document.getElementById('schedule-time-input').value = schedule.time;
+            document.getElementById('schedule-time-display').textContent = schedule.time;
+
+            showModalStep('days');
+            document.getElementById('schedule-modal').style.display = 'flex';
+        }
+
+        function deleteSchedule(id) {
+            schedules = schedules.filter(s => s.id !== id);
+            renderScheduleList();
+            saveToStorage();
+
+            // Update device alarm
+            if (globalAlarmEnabled && cmdChar) {
+                const nextAlarm = getNextScheduledAlarmFromSchedules();
+                if (nextAlarm) {
+                    doSetAlarm(nextAlarm);
+                } else {
+                    cmdChar.writeValueWithoutResponse(disableAlarmCmd());
+                    updateAlarmStatus(null);
+                }
+            }
+        }
+
+        function getNextScheduledAlarmFromSchedules() {
+            if (!schedules || schedules.length === 0) return null;
+
+            const now = new Date();
+            let nextAlarm = null;
+
+            for (const schedule of schedules) {
+                if (!schedule.enabled) continue;
+
+                for (const day of schedule.days) {
+                    const [h, m] = schedule.time.split(':').map(Number);
+                    const candidate = getNextOccurrence(day, h, m);
+
+                    if (!nextAlarm || candidate < nextAlarm) {
+                        nextAlarm = candidate;
+                    }
+                }
+            }
+
+            return nextAlarm;
+        }
+
+        // Update time display when input changes
+        document.addEventListener('DOMContentLoaded', () => {
+            const timeInput = document.getElementById('schedule-time-input');
+            if (timeInput) {
+                timeInput.addEventListener('change', function() {
+                    document.getElementById('schedule-time-display').textContent =
+                        formatTime12h(this.value);
+                });
+            }
+        });
 
         function formatTime12h(time24) {
             const [h, m] = time24.split(':').map(Number);
@@ -3149,6 +3865,10 @@
             updateSleepCalc();
             selectDay(new Date().getDay());
             updateDayButtons();
+
+            // Initialize schedule system
+            renderScheduleList();
+            document.getElementById('alarm-toggle').classList.toggle('active', globalAlarmEnabled);
         });
 
         // Storage
@@ -3159,7 +3879,10 @@
                 minBpm, maxBpm, totalBpm,
                 sessionStart,
                 alarm: currentAlarm?.toISOString(),
-                weeklySchedule
+                weeklySchedule,
+                schedules,
+                globalAlarmEnabled,
+                nextScheduleId
             }));
         }
 
@@ -3179,6 +3902,18 @@
                     weeklySchedule = data.weeklySchedule;
                     updateDayButtons();
                 }
+                if (data.schedules) {
+                    schedules = data.schedules;
+                }
+                if (data.globalAlarmEnabled !== undefined) {
+                    globalAlarmEnabled = data.globalAlarmEnabled;
+                    document.getElementById('alarm-toggle').classList.toggle('active', globalAlarmEnabled);
+                }
+                if (data.nextScheduleId) {
+                    nextScheduleId = data.nextScheduleId;
+                }
+                // Render schedule list on load
+                renderScheduleList();
             } catch (e) {}
         }
 
