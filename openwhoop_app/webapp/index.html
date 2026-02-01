@@ -2408,12 +2408,12 @@
                 await cmdChar.writeValueWithoutResponse(getAlarmTime());
                 await sleep(100);
 
-                // Sync scheduled alarm to device if enabled
+                // Sync scheduled alarm to device if enabled (silent - don't show errors during connect)
                 if (globalAlarmEnabled && schedules && schedules.length > 0) {
                     const nextAlarm = getNextScheduledAlarmFromSchedules();
                     if (nextAlarm) {
                         debug('Syncing scheduled alarm to device...');
-                        await doSetAlarm(nextAlarm);
+                        await doSetAlarm(nextAlarm, true); // silent mode
                     }
                 }
                 await sleep(100);
@@ -3829,7 +3829,7 @@
             }
         }
 
-        async function doSetAlarm(alarmDate) {
+        async function doSetAlarm(alarmDate, silent = false) {
             try {
                 await cmdChar.writeValueWithoutResponse(setAlarmTime(Math.floor(alarmDate.getTime() / 1000)));
                 currentAlarm = alarmDate;
@@ -3838,8 +3838,12 @@
                 document.getElementById('alarm-toggle').classList.add('active');
                 updateAlarmStatus(alarmDate);
                 saveToStorage();
+                debug(`Alarm set for ${alarmDate.toLocaleString()}`);
             } catch (e) {
-                showError('Failed to set alarm');
+                debug('Failed to set alarm: ' + e);
+                if (!silent) {
+                    showError('Failed to set alarm');
+                }
             }
         }
 
@@ -3973,19 +3977,29 @@
                     weeklySchedule = data.weeklySchedule;
                     updateDayButtons();
                 }
-                if (data.schedules) {
+                // Only load schedules if there are any saved (don't overwrite defaults with empty array)
+                if (data.schedules && Array.isArray(data.schedules) && data.schedules.length > 0) {
                     schedules = data.schedules;
+                    debug(`Loaded ${schedules.length} schedules from storage`);
+                } else {
+                    debug(`Using ${schedules.length} default schedules`);
                 }
                 if (data.globalAlarmEnabled !== undefined) {
                     globalAlarmEnabled = data.globalAlarmEnabled;
-                    document.getElementById('alarm-toggle').classList.toggle('active', globalAlarmEnabled);
                 }
                 if (data.nextScheduleId) {
                     nextScheduleId = data.nextScheduleId;
                 }
+                // Update toggle state
+                const toggle = document.getElementById('alarm-toggle');
+                if (toggle) {
+                    toggle.classList.toggle('active', globalAlarmEnabled);
+                }
                 // Render schedule list on load
                 renderScheduleList();
-            } catch (e) {}
+            } catch (e) {
+                debug('Error loading from storage: ' + e);
+            }
         }
 
         // Error
