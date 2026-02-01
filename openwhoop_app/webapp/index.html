@@ -825,6 +825,10 @@
             border-color: white;
             color: black;
         }
+        .day-btn-large.taken {
+            opacity: 0.3;
+            cursor: not-allowed;
+        }
         .day-btn-large.has-schedule {
             position: relative;
         }
@@ -3489,19 +3493,41 @@
             actions.style.display = isVisible ? 'none' : 'flex';
         }
 
+        // Get days that are already assigned to other schedules
+        function getTakenDays(excludeScheduleId = null) {
+            const taken = new Set();
+            for (const schedule of schedules) {
+                if (schedule.id !== excludeScheduleId) {
+                    schedule.days.forEach(d => taken.add(d));
+                }
+            }
+            return taken;
+        }
+
+        function updateDayButtonStates() {
+            const takenDays = getTakenDays(editingScheduleId);
+            document.querySelectorAll('.day-btn-large').forEach(btn => {
+                const day = parseInt(btn.dataset.day);
+                const isTaken = takenDays.has(day);
+                const isSelected = modalSelectedDays.includes(day);
+
+                btn.classList.toggle('selected', isSelected);
+                btn.classList.toggle('taken', isTaken);
+                btn.disabled = isTaken;
+            });
+        }
+
         function showAddScheduleModal() {
             editingScheduleId = null;
             modalSelectedDays = [];
             modalSelectedMode = 'exact';
             modalSleepGoal = 85;
 
-            // Reset UI
-            document.querySelectorAll('.day-btn-large').forEach(btn => {
-                btn.classList.remove('selected');
-            });
+            // Reset UI and mark taken days
             document.getElementById('schedule-time-input').value = '07:00';
             document.getElementById('schedule-time-display').textContent = '07:00';
             document.getElementById('sleep-goal-options').style.display = 'none';
+            updateDayButtonStates();
 
             // Show modal at step 1
             showModalStep('days');
@@ -3520,6 +3546,13 @@
 
         function toggleScheduleDay(day) {
             const btn = document.querySelector(`.day-btn-large[data-day="${day}"]`);
+
+            // Don't allow selecting taken days
+            if (btn.disabled) {
+                showError('This day already has a schedule');
+                return;
+            }
+
             const idx = modalSelectedDays.indexOf(day);
 
             if (idx >= 0) {
@@ -3619,13 +3652,10 @@
             modalSelectedMode = schedule.mode;
             modalSleepGoal = schedule.sleepGoal;
 
-            // Update UI to show current values
-            document.querySelectorAll('.day-btn-large').forEach(btn => {
-                const day = parseInt(btn.dataset.day);
-                btn.classList.toggle('selected', modalSelectedDays.includes(day));
-            });
+            // Update UI to show current values and mark taken days
             document.getElementById('schedule-time-input').value = schedule.time;
             document.getElementById('schedule-time-display').textContent = schedule.time;
+            updateDayButtonStates();
 
             showModalStep('days');
             document.getElementById('schedule-modal').style.display = 'flex';
