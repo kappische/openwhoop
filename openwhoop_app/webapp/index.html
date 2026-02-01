@@ -2703,6 +2703,23 @@
                     if (year >= 2020 && year <= 2030) {
                         historicalData.push(reading);
 
+                        // Log first few packets fully to analyze for SpO2 data
+                        if (historicalData.length <= 5 && packet.data.length > 28) {
+                            const extra = packet.data.slice(28);
+                            const extraHex = Array.from(extra.slice(0, 40)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                            debug(`Historical extra bytes (${extra.length}): ${extraHex}...`);
+                            // Look for values in SpO2 range (85-100%)
+                            const spo2Candidates = [];
+                            for (let i = 0; i < Math.min(extra.length, 50); i++) {
+                                if (extra[i] >= 85 && extra[i] <= 100) {
+                                    spo2Candidates.push(`[${i+28}]=${extra[i]}`);
+                                }
+                            }
+                            if (spo2Candidates.length > 0) {
+                                debug(`Possible SpO2 values: ${spo2Candidates.join(', ')}`);
+                            }
+                        }
+
                         // Log periodically
                         if (historicalData.length <= 20 || historicalData.length % 100 === 0) {
                             debug(`Historical reading #${historicalData.length}: ${reading.time.toISOString()} bpm=${reading.bpm}`);
