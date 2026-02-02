@@ -1596,6 +1596,62 @@
             </div>
         </div>
 
+        <!-- Settings Tab -->
+        <div class="tab-content" id="tab-settings">
+            <div class="health-monitor-header">SETTINGS</div>
+
+            <div class="metric-card" style="padding: 20px;">
+                <div class="metric-card-header">
+                    <span class="metric-card-icon">👤</span>
+                    <span class="metric-card-title">PROFILE</span>
+                </div>
+                <div style="margin-top: 16px;">
+                    <label style="display: block; color: var(--text-secondary); font-size: 12px; margin-bottom: 8px;">
+                        Age (for HR zone calculation)
+                    </label>
+                    <div style="display: flex; align-items: center; gap: 12px;">
+                        <input type="number" id="age-input" min="10" max="100" placeholder="Enter age"
+                            style="background: var(--bg); border: 1px solid var(--border); border-radius: 8px;
+                                   padding: 12px; color: var(--text); font-size: 16px; width: 100px;"
+                            onchange="saveAge()">
+                        <span style="color: var(--text-secondary); font-size: 14px;">years</span>
+                    </div>
+                    <div style="margin-top: 8px; color: var(--text-secondary); font-size: 11px;">
+                        Max HR = 220 - age
+                    </div>
+                </div>
+                <div id="max-hr-display" style="margin-top: 16px; padding: 12px; background: var(--bg); border-radius: 8px;">
+                    <span style="color: var(--text-secondary);">Estimated Max HR: </span>
+                    <span id="max-hr-value" style="color: var(--green); font-weight: 600;">--</span>
+                    <span style="color: var(--text-secondary);"> bpm</span>
+                </div>
+            </div>
+
+            <div class="metric-card" style="padding: 20px; margin-top: 16px;">
+                <div class="metric-card-header">
+                    <span class="metric-card-icon">🎯</span>
+                    <span class="metric-card-title">HR ZONES</span>
+                </div>
+                <div id="zones-table" style="margin-top: 16px; font-size: 13px;">
+                    <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
+                        <span>Zone 5 (Max)</span><span id="zone5-range">90-100%</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
+                        <span>Zone 4 (Hard)</span><span id="zone4-range">80-90%</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
+                        <span>Zone 3 (Moderate)</span><span id="zone3-range">70-80%</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 8px 0; border-bottom: 1px solid var(--border);">
+                        <span>Zone 2 (Light)</span><span id="zone2-range">60-70%</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; padding: 8px 0;">
+                        <span>Zone 1 (Very Light)</span><span id="zone1-range">50-60%</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
         <!-- Bottom Navigation -->
         <div class="bottom-nav">
             <button class="nav-item active" onclick="showTab('overview')">
@@ -1613,6 +1669,10 @@
             <button class="nav-item" onclick="showTab('alarm')">
                 <span class="nav-icon">⏰</span>
                 Alarm
+            </button>
+            <button class="nav-item" onclick="showTab('settings')">
+                <span class="nav-icon">⚙</span>
+                Settings
             </button>
         </div>
     </div>
@@ -1725,6 +1785,11 @@
             sleepDuration: null,
             sleepScore: null,
             stress: null        // Stress score (0-10, from Rust algorithm)
+        };
+
+        // User settings (persisted to localStorage)
+        let userSettings = {
+            age: null           // User's age for max HR calculation (220 - age)
         };
 
         // Real sensor data tracking
@@ -3444,8 +3509,8 @@
             if (bpm < minBpm) minBpm = bpm;
             if (bpm > maxBpm) maxBpm = bpm;
 
-            // REAL-TIME: Calculate HR Zone
-            const maxHR = 200;
+            // REAL-TIME: Calculate HR Zone (using 220-age if set)
+            const maxHR = getMaxHR();
             const hrPercent = (bpm / maxHR) * 100;
             let zone = 0;
             if (hrPercent >= 90) zone = 5;
@@ -4482,6 +4547,13 @@
                         setTimeout(() => processSleepData(), 100);
                     }
                 }
+                // Load user settings (age)
+                if (data.userAge !== undefined && data.userAge !== null) {
+                    userSettings.age = data.userAge;
+                    const ageInput = document.getElementById('age-input');
+                    if (ageInput) ageInput.value = userSettings.age;
+                    updateZoneDisplay();
+                }
                 // Update toggle state
                 const toggle = document.getElementById('alarm-toggle');
                 if (toggle) {
@@ -4492,6 +4564,35 @@
             } catch (e) {
                 debug('Error loading from storage: ' + e);
             }
+        }
+
+        function saveAge() {
+            const ageInput = document.getElementById('age-input');
+            const age = parseInt(ageInput.value);
+            if (age >= 10 && age <= 100) {
+                userSettings.age = age;
+                // Save to localStorage
+                const data = JSON.parse(localStorage.getItem('whoop_data') || '{}');
+                data.userAge = age;
+                localStorage.setItem('whoop_data', JSON.stringify(data));
+                updateZoneDisplay();
+                debug(`Age set to ${age}, max HR = ${220 - age} bpm`);
+            }
+        }
+
+        function getMaxHR() {
+            return userSettings.age ? (220 - userSettings.age) : 200;
+        }
+
+        function updateZoneDisplay() {
+            const maxHR = getMaxHR();
+            document.getElementById('max-hr-value').textContent = maxHR;
+            // Update zone ranges with actual BPM values
+            document.getElementById('zone5-range').textContent = `${Math.round(maxHR * 0.9)}-${maxHR} bpm`;
+            document.getElementById('zone4-range').textContent = `${Math.round(maxHR * 0.8)}-${Math.round(maxHR * 0.9)} bpm`;
+            document.getElementById('zone3-range').textContent = `${Math.round(maxHR * 0.7)}-${Math.round(maxHR * 0.8)} bpm`;
+            document.getElementById('zone2-range').textContent = `${Math.round(maxHR * 0.6)}-${Math.round(maxHR * 0.7)} bpm`;
+            document.getElementById('zone1-range').textContent = `${Math.round(maxHR * 0.5)}-${Math.round(maxHR * 0.6)} bpm`;
         }
 
         // Error
