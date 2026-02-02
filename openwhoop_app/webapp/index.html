@@ -3833,6 +3833,9 @@
                 reconnectAttempts = 0;
                 document.getElementById('status-dot').classList.add('connected');
                 document.getElementById('status-text').textContent = '';
+                // Hide connect screen and show main app
+                document.getElementById('connect-screen').classList.add('hidden');
+                document.getElementById('main-app').classList.add('active');
                 debug('Reconnected successfully!');
 
             } catch (e) {
