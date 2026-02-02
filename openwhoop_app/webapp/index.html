@@ -1412,6 +1412,23 @@
                         <span id="min-value">--</span> - <span id="max-value">--</span> bpm
                     </div>
                 </div>
+
+                <!-- Heart Rhythm (AFib/Ectopic Detection) -->
+                <div class="metric-card" style="grid-column: span 2;">
+                    <div class="metric-card-header">
+                        <span class="metric-card-icon">💓</span>
+                        <span class="metric-card-title">HEART RHYTHM</span>
+                    </div>
+                    <div class="metric-card-value">
+                        <span class="metric-card-number" id="rhythm-value">--</span>
+                    </div>
+                    <div class="metric-card-status" id="rhythm-status">analyzing...</div>
+                    <div class="metric-card-detail" id="rhythm-detail" style="font-size: 11px; color: #888; margin-top: 4px;"></div>
+                    <div style="font-size: 9px; color: #666; margin-top: 8px; line-height: 1.3;">
+                        Screening only - not a medical diagnosis.<br>
+                        Consult a doctor for any cardiac concerns.
+                    </div>
+                </div>
             </div>
         </div>
 
@@ -1839,6 +1856,22 @@
             lastTempUpdate: 0,          // Timestamp of last temp update
             lastSpO2Update: 0,          // Timestamp of last SpO2 update
             rawOpticalValues: []        // Raw optical sensor values
+        };
+
+        // Heart rhythm analysis (AFib, ectopic beats)
+        let rhythmAnalysis = {
+            afibProbability: null,      // 0-100% probability of AFib
+            afibStatus: null,           // 'normal', 'irregular', 'afib_warning'
+            ectopicCount: 0,            // Number of detected ectopic beats
+            ectopicBurden: null,        // Percentage of beats that are ectopic
+            hrvEntropy: null,           // Shannon entropy of RR intervals
+            rrCoeffVar: null,           // Coefficient of variation
+            poincareRatio: null,        // SD1/SD2 ratio from Poincaré plot
+            turningPointRatio: null,    // Turning point ratio
+            hrtTurbulenceOnset: null,   // Heart Rate Turbulence onset
+            hrtTurbulenceSlope: null,   // Heart Rate Turbulence slope
+            totalBeatsAnalyzed: 0,      // Total RR intervals analyzed
+            lastAnalysis: 0             // Timestamp of last analysis
         };
 
         // Device status tracking
@@ -2385,6 +2418,347 @@
             return 'poor';
         }
 
+        // ============================================
+        // HEART RHYTHM ANALYSIS (AFib, Ectopic Beats)
+        // ============================================
+        // DISCLAIMER: This is screening only, NOT a medical diagnosis.
+        // Always consult a healthcare provider for cardiac concerns.
+
+        // Calculate Shannon Entropy of RR intervals
+        // Higher entropy = more randomness (AFib has high entropy)
+        function calculateShannonEntropy(rrIntervals) {
+            if (rrIntervals.length < 10) return null;
+
+            // Bin RR intervals into 50ms buckets
+            const binSize = 50;
+            const bins = {};
+            for (const rr of rrIntervals) {
+                const bin = Math.floor(rr / binSize) * binSize;
+                bins[bin] = (bins[bin] || 0) + 1;
+            }
+
+            // Calculate entropy: -sum(p * log2(p))
+            const total = rrIntervals.length;
+            let entropy = 0;
+            for (const count of Object.values(bins)) {
+                const p = count / total;
+                if (p > 0) {
+                    entropy -= p * Math.log2(p);
+                }
+            }
+
+            return entropy;
+        }
+
+        // Calculate Coefficient of Variation (CV) of RR intervals
+        // CV > 12-15% suggests irregularity; AFib typically shows CV > 15%
+        function calculateRRCoefficientOfVariation(rrIntervals) {
+            if (rrIntervals.length < 10) return null;
+
+            const mean = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
+            const variance = rrIntervals.reduce((sum, rr) => sum + Math.pow(rr - mean, 2), 0) / rrIntervals.length;
+            const stdDev = Math.sqrt(variance);
+
+            return (stdDev / mean) * 100; // As percentage
+        }
+
+        // Calculate Poincaré plot SD1 and SD2
+        // SD1 = short-term variability, SD2 = long-term variability
+        // Normal: SD1/SD2 ratio ~0.5-1.0, AFib: ratio approaches 1 (circular cloud)
+        function calculatePoincareMetrics(rrIntervals) {
+            if (rrIntervals.length < 20) return null;
+
+            // Create successive differences
+            const diffs = [];
+            for (let i = 0; i < rrIntervals.length - 1; i++) {
+                diffs.push(rrIntervals[i + 1] - rrIntervals[i]);
+            }
+
+            // SD1 = std of differences / sqrt(2) (short-term)
+            const meanDiff = diffs.reduce((a, b) => a + b, 0) / diffs.length;
+            const varDiff = diffs.reduce((sum, d) => sum + Math.pow(d - meanDiff, 2), 0) / diffs.length;
+            const SD1 = Math.sqrt(varDiff) / Math.sqrt(2);
+
+            // SD2 requires the sum of successive RR pairs
+            const sums = [];
+            for (let i = 0; i < rrIntervals.length - 1; i++) {
+                sums.push(rrIntervals[i] + rrIntervals[i + 1]);
+            }
+            const meanSum = sums.reduce((a, b) => a + b, 0) / sums.length;
+            const varSum = sums.reduce((sum, s) => sum + Math.pow(s - meanSum, 2), 0) / sums.length;
+            const SD2 = Math.sqrt(varSum) / Math.sqrt(2);
+
+            return { SD1, SD2, ratio: SD2 > 0 ? SD1 / SD2 : null };
+        }
+
+        // Calculate Turning Point Ratio
+        // Measures how often the RR direction changes
+        // Normal: ~0.5-0.7, AFib: often > 0.7 (more erratic)
+        function calculateTurningPointRatio(rrIntervals) {
+            if (rrIntervals.length < 10) return null;
+
+            let turningPoints = 0;
+            for (let i = 1; i < rrIntervals.length - 1; i++) {
+                const prev = rrIntervals[i] - rrIntervals[i - 1];
+                const next = rrIntervals[i + 1] - rrIntervals[i];
+                // A turning point is where direction changes
+                if ((prev > 0 && next < 0) || (prev < 0 && next > 0)) {
+                    turningPoints++;
+                }
+            }
+
+            return turningPoints / (rrIntervals.length - 2);
+        }
+
+        // Detect ectopic beats (PVCs/PACs) from RR intervals
+        // Pattern: short RR followed by long RR (compensatory pause)
+        function detectEctopicBeats(rrIntervals) {
+            if (rrIntervals.length < 10) return { count: 0, indices: [], burden: 0 };
+
+            const mean = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
+            const ectopicIndices = [];
+
+            // Look for pattern: RR < 80% of mean followed by RR > 120% of mean
+            for (let i = 0; i < rrIntervals.length - 1; i++) {
+                const current = rrIntervals[i];
+                const next = rrIntervals[i + 1];
+
+                // Premature beat (short) followed by compensatory pause (long)
+                if (current < mean * 0.80 && next > mean * 1.15) {
+                    ectopicIndices.push(i);
+                }
+            }
+
+            const burden = (ectopicIndices.length / rrIntervals.length) * 100;
+
+            return {
+                count: ectopicIndices.length,
+                indices: ectopicIndices,
+                burden: Math.round(burden * 10) / 10
+            };
+        }
+
+        // Calculate Heart Rate Turbulence (HRT) after ectopic beats
+        // Requires ectopic beat indices and surrounding RR intervals
+        // TO (Turbulence Onset): should be negative (acceleration after PVC)
+        // TS (Turbulence Slope): should be positive (deceleration after)
+        function calculateHeartRateTurbulence(rrIntervals, ectopicIndices) {
+            if (ectopicIndices.length === 0 || rrIntervals.length < 20) {
+                return { TO: null, TS: null };
+            }
+
+            let toValues = [];
+            let tsValues = [];
+
+            for (const idx of ectopicIndices) {
+                // Need 2 beats before and 15+ beats after
+                if (idx < 2 || idx + 16 >= rrIntervals.length) continue;
+
+                // TO = (RR1 + RR2 - RR-2 - RR-1) / (RR-2 + RR-1) * 100
+                // RR-2, RR-1 are before PVC; RR1, RR2 are after compensatory pause
+                const rrMinus2 = rrIntervals[idx - 2];
+                const rrMinus1 = rrIntervals[idx - 1];
+                const rr1 = rrIntervals[idx + 2]; // Skip the PVC and pause
+                const rr2 = rrIntervals[idx + 3];
+
+                const to = ((rr1 + rr2) - (rrMinus2 + rrMinus1)) / (rrMinus2 + rrMinus1) * 100;
+                toValues.push(to);
+
+                // TS = maximum positive slope of regression line over 5 consecutive RRs
+                // in the 15 RRs after the compensatory pause
+                let maxSlope = 0;
+                for (let j = idx + 2; j <= idx + 11; j++) {
+                    if (j + 4 >= rrIntervals.length) break;
+
+                    // Simple linear regression over 5 points
+                    const points = [];
+                    for (let k = 0; k < 5; k++) {
+                        points.push({ x: k, y: rrIntervals[j + k] });
+                    }
+                    const slope = linearRegressionSlope(points);
+                    if (slope > maxSlope) maxSlope = slope;
+                }
+                tsValues.push(maxSlope);
+            }
+
+            // Average TO and TS across all ectopic events
+            const avgTO = toValues.length > 0
+                ? toValues.reduce((a, b) => a + b, 0) / toValues.length
+                : null;
+            const avgTS = tsValues.length > 0
+                ? tsValues.reduce((a, b) => a + b, 0) / tsValues.length
+                : null;
+
+            return { TO: avgTO, TS: avgTS };
+        }
+
+        // Helper: calculate slope from linear regression
+        function linearRegressionSlope(points) {
+            const n = points.length;
+            let sumX = 0, sumY = 0, sumXY = 0, sumX2 = 0;
+
+            for (const p of points) {
+                sumX += p.x;
+                sumY += p.y;
+                sumXY += p.x * p.y;
+                sumX2 += p.x * p.x;
+            }
+
+            const denom = n * sumX2 - sumX * sumX;
+            if (denom === 0) return 0;
+
+            return (n * sumXY - sumX * sumY) / denom;
+        }
+
+        // Combined AFib probability score
+        // Weighs multiple metrics to estimate AFib likelihood
+        function calculateAfibProbability(rrIntervals) {
+            if (rrIntervals.length < 30) return null;
+
+            const entropy = calculateShannonEntropy(rrIntervals);
+            const cv = calculateRRCoefficientOfVariation(rrIntervals);
+            const poincare = calculatePoincareMetrics(rrIntervals);
+            const tpr = calculateTurningPointRatio(rrIntervals);
+
+            if (entropy === null || cv === null) return null;
+
+            let score = 0;
+            let weights = 0;
+
+            // Entropy score (normal: 2-3, AFib: >3.5)
+            if (entropy !== null) {
+                const entropyScore = Math.min(100, Math.max(0, (entropy - 2.5) / 1.5 * 100));
+                score += entropyScore * 0.30;
+                weights += 0.30;
+            }
+
+            // CV score (normal: 5-10%, AFib: >15%)
+            if (cv !== null) {
+                const cvScore = Math.min(100, Math.max(0, (cv - 8) / 10 * 100));
+                score += cvScore * 0.30;
+                weights += 0.30;
+            }
+
+            // Poincaré ratio score (normal: 0.4-0.7, AFib: >0.8)
+            if (poincare && poincare.ratio !== null) {
+                const ratioScore = Math.min(100, Math.max(0, (poincare.ratio - 0.5) / 0.5 * 100));
+                score += ratioScore * 0.25;
+                weights += 0.25;
+            }
+
+            // Turning point ratio score (normal: 0.5-0.65, AFib: >0.7)
+            if (tpr !== null) {
+                const tprScore = Math.min(100, Math.max(0, (tpr - 0.55) / 0.2 * 100));
+                score += tprScore * 0.15;
+                weights += 0.15;
+            }
+
+            // Normalize by weights used
+            const probability = weights > 0 ? Math.round(score / weights) : 0;
+
+            return Math.max(0, Math.min(100, probability));
+        }
+
+        // Main rhythm analysis function
+        function analyzeHeartRhythm(rrIntervals) {
+            if (rrIntervals.length < 30) {
+                debug('Rhythm analysis: insufficient data (' + rrIntervals.length + ' intervals, need 30+)');
+                return;
+            }
+
+            debug('Analyzing heart rhythm from ' + rrIntervals.length + ' RR intervals...');
+
+            // Calculate all metrics
+            rhythmAnalysis.hrvEntropy = calculateShannonEntropy(rrIntervals);
+            rhythmAnalysis.rrCoeffVar = calculateRRCoefficientOfVariation(rrIntervals);
+            rhythmAnalysis.turningPointRatio = calculateTurningPointRatio(rrIntervals);
+
+            const poincare = calculatePoincareMetrics(rrIntervals);
+            if (poincare) {
+                rhythmAnalysis.poincareRatio = poincare.ratio;
+            }
+
+            // Detect ectopic beats
+            const ectopics = detectEctopicBeats(rrIntervals);
+            rhythmAnalysis.ectopicCount = ectopics.count;
+            rhythmAnalysis.ectopicBurden = ectopics.burden;
+
+            // Calculate HRT if ectopics found
+            if (ectopics.count > 0) {
+                const hrt = calculateHeartRateTurbulence(rrIntervals, ectopics.indices);
+                rhythmAnalysis.hrtTurbulenceOnset = hrt.TO;
+                rhythmAnalysis.hrtTurbulenceSlope = hrt.TS;
+            }
+
+            // Calculate AFib probability
+            rhythmAnalysis.afibProbability = calculateAfibProbability(rrIntervals);
+            rhythmAnalysis.totalBeatsAnalyzed = rrIntervals.length;
+            rhythmAnalysis.lastAnalysis = Date.now();
+
+            // Determine status
+            if (rhythmAnalysis.afibProbability !== null) {
+                if (rhythmAnalysis.afibProbability >= 70) {
+                    rhythmAnalysis.afibStatus = 'afib_warning';
+                } else if (rhythmAnalysis.afibProbability >= 40 || rhythmAnalysis.ectopicBurden > 5) {
+                    rhythmAnalysis.afibStatus = 'irregular';
+                } else {
+                    rhythmAnalysis.afibStatus = 'normal';
+                }
+            }
+
+            debug(`Rhythm: entropy=${rhythmAnalysis.hrvEntropy?.toFixed(2)}, CV=${rhythmAnalysis.rrCoeffVar?.toFixed(1)}%, ` +
+                  `Poincaré=${rhythmAnalysis.poincareRatio?.toFixed(2)}, TPR=${rhythmAnalysis.turningPointRatio?.toFixed(2)}`);
+            debug(`Ectopics: ${rhythmAnalysis.ectopicCount} (${rhythmAnalysis.ectopicBurden}% burden)`);
+            debug(`AFib probability: ${rhythmAnalysis.afibProbability}% - Status: ${rhythmAnalysis.afibStatus}`);
+
+            // Update UI
+            updateRhythmUI();
+        }
+
+        // Update rhythm analysis UI
+        function updateRhythmUI() {
+            const statusEl = document.getElementById('rhythm-status');
+            const valueEl = document.getElementById('rhythm-value');
+            const detailEl = document.getElementById('rhythm-detail');
+
+            if (!statusEl || !valueEl) return;
+
+            if (rhythmAnalysis.afibStatus === null) {
+                valueEl.textContent = '--';
+                statusEl.textContent = 'analyzing...';
+                statusEl.classList.remove('warning');
+                if (detailEl) detailEl.textContent = '';
+                return;
+            }
+
+            // Update main display based on status
+            statusEl.classList.remove('warning');
+            if (rhythmAnalysis.afibStatus === 'normal') {
+                valueEl.textContent = 'NSR';
+                statusEl.textContent = 'normal sinus rhythm';
+            } else if (rhythmAnalysis.afibStatus === 'irregular') {
+                valueEl.textContent = 'IRR';
+                statusEl.textContent = 'irregular - monitor';
+                statusEl.classList.add('warning');
+            } else if (rhythmAnalysis.afibStatus === 'afib_warning') {
+                valueEl.textContent = 'AFib?';
+                statusEl.textContent = 'possible AFib - see doctor';
+                statusEl.classList.add('warning');
+            }
+
+            // Update detail line
+            if (detailEl) {
+                let details = [];
+                if (rhythmAnalysis.ectopicCount > 0) {
+                    details.push(`${rhythmAnalysis.ectopicCount} ectopic${rhythmAnalysis.ectopicCount > 1 ? 's' : ''}`);
+                }
+                if (rhythmAnalysis.afibProbability !== null) {
+                    details.push(`${rhythmAnalysis.afibProbability}% AFib prob`);
+                }
+                detailEl.textContent = details.join(' | ');
+            }
+        }
+
         // Update strain UI elements
         function updateStrainUI() {
             const strain = strainData.totalStrain;
@@ -2724,6 +3098,9 @@
             if (rawRR.length >= 30) {
                 sleepMetrics.respRate = calculateRespiratoryRate(rawRR);
                 debug(`Resp rate calculated from ${metricsSource}: ${sleepMetrics.respRate?.toFixed(1)} rpm (${rawRR.length} raw RR intervals)`);
+
+                // Analyze heart rhythm for AFib and ectopic beats (uses same raw RR)
+                analyzeHeartRhythm(rawRR);
             }
 
             // SpO2 - only use real sensor data, no estimates
