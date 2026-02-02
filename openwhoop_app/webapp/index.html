@@ -1852,6 +1852,11 @@
         let debugLog = []; // Store all logs for export
         let packetCount = 0;
 
+        // Background mode state - reduces polling when app not visible
+        let isInBackground = false;
+        let batteryIntervalId = null;
+        let alarmIntervalId = null;
+
         // Historical/Sleep data from device
         let historicalData = []; // All historical readings
         let sleepData = {
@@ -3666,9 +3671,10 @@
                 deviceStatus.onWrist = true;
                 updateWristUI();
 
-                // Set up periodic battery level refresh (every 30 seconds, like whoomp)
-                setInterval(async () => {
-                    if (cmdChar) {
+                // Set up periodic battery level refresh (every 30 seconds when active)
+                // These are paused when app goes to background to save battery
+                batteryIntervalId = setInterval(async () => {
+                    if (cmdChar && !isInBackground) {
                         try {
                             await cmdChar.writeValueWithoutResponse(getBatteryLevel());
                         } catch (e) {
@@ -3677,9 +3683,9 @@
                     }
                 }, 30 * 1000);
 
-                // Set up periodic alarm refresh - push next alarm when current one passes (every minute)
-                setInterval(async () => {
-                    if (cmdChar && globalAlarmEnabled && schedules.length > 0) {
+                // Set up periodic alarm refresh (every minute when active)
+                alarmIntervalId = setInterval(async () => {
+                    if (cmdChar && !isInBackground && globalAlarmEnabled && schedules.length > 0) {
                         await refreshAlarmIfNeeded();
                     }
                 }, 60 * 1000);
@@ -3748,6 +3754,51 @@
             document.getElementById('connect-btn').disabled = false;
             document.getElementById('connect-btn').textContent = 'Connect';
         }
+
+        // Background mode handlers - reduce device polling when app not visible
+        async function enterBackgroundMode() {
+            if (isInBackground) return;
+            isInBackground = true;
+            debug('=== Entering Background Mode (saving battery) ===');
+
+            if (cmdChar) {
+                try {
+                    // Disable realtime HR streaming to save device battery
+                    await cmdChar.writeValueWithoutResponse(disableRealtimeHr());
+                    debug('Disabled realtime HR for background mode');
+                } catch (e) {
+                    debug('Background mode error: ' + e.message);
+                }
+            }
+        }
+
+        async function exitBackgroundMode() {
+            if (!isInBackground) return;
+            isInBackground = false;
+            debug('=== Exiting Background Mode (resuming) ===');
+
+            if (cmdChar) {
+                try {
+                    // Re-enable realtime HR streaming
+                    await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
+                    await sleep(50);
+                    // Request fresh battery level
+                    await cmdChar.writeValueWithoutResponse(getBatteryLevel());
+                    debug('Resumed realtime HR and refreshed battery');
+                } catch (e) {
+                    debug('Resume error: ' + e.message);
+                }
+            }
+        }
+
+        // Listen for page visibility changes
+        document.addEventListener('visibilitychange', () => {
+            if (document.hidden) {
+                enterBackgroundMode();
+            } else {
+                exitBackgroundMode();
+            }
+        });
 
         const sleep = ms => new Promise(r => setTimeout(r, ms));
 
