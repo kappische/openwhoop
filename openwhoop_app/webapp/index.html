@@ -60,8 +60,13 @@
             height: 6px;
             border-radius: 50%;
             background: var(--red);
+            transition: transform 0.2s;
         }
         .status-dot.connected { background: var(--green); }
+        .status-dot.connected:hover {
+            transform: scale(1.5);
+            box-shadow: 0 0 8px var(--green);
+        }
 
         .battery-status {
             font-size: 11px;
@@ -1243,7 +1248,7 @@
         <div class="header-status">
             <span class="wrist-status" id="wrist-status" title="Wrist status"></span>
             <span class="battery-status" id="battery-status" title="Battery level">--%</span>
-            <span class="status-dot" id="status-dot"></span>
+            <span class="status-dot" id="status-dot" onclick="gracefulDisconnect()" title="Click to disconnect (saves battery)" style="cursor:pointer;"></span>
             <span id="status-text">Disconnected</span>
         </div>
     </div>
@@ -2231,7 +2236,9 @@
             return createPacket(35, 0, 10, [t & 0xFF, (t >> 8) & 0xFF, (t >> 16) & 0xFF, (t >> 24) & 0xFF, 0, 0, 0, 0, 0]);
         };
         const enterHighFreqSync = () => createPacket(35, 0, 96, []);
+        const exitHighFreqSync = () => createPacket(35, 0, 97, []);  // Exit high power mode
         const enableRealtimeHr = () => createPacket(35, 0, 3, [0x01]);
+        const disableRealtimeHr = () => createPacket(35, 0, 3, [0x00]);
         const setAlarmTime = (t) => createPacket(35, 0, 66, [0x01, t & 0xFF, (t >> 8) & 0xFF, (t >> 16) & 0xFF, (t >> 24) & 0xFF, 0, 0, 0, 0]);
         const getAlarmTime = () => createPacket(35, 0, 67, []);
         const runAlarmNow = () => createPacket(35, 0, 68, [0x00]);
@@ -3565,21 +3572,8 @@
                 await cmdChar.writeValueWithoutResponse(setClock());
                 await sleep(100);
 
-                // Try to enable R7 data collection (may enable RR intervals in historical data)
-                // Rust has this command but commented out - experimenting with different params
-                debug('Enabling R7 data collection (trying multiple params)...');
-
-                // Try param [41, 1] - original from Rust
-                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_R7_DATA, [41, 1]));
-                await sleep(100);
-
-                // Try param [0x01] - simple enable
-                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_R7_DATA, [0x01]));
-                await sleep(100);
-
-                // Try param [0x01, 0x01] - extended enable
-                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_R7_DATA, [0x01, 0x01]));
-                await sleep(100);
+                // Note: R7 data collection commands removed - they don't affect RR interval availability.
+                // RR intervals are only included in historical packets when activity type = Sleep.
 
                 // Request historical data using simple [0x00] format (like Rust implementation)
                 // This requests all available historical data from the device
@@ -3700,6 +3694,43 @@
             }
         }
 
+        // Graceful disconnect - sends cleanup commands to device before disconnecting
+        // This saves battery by exiting high-power modes
+        async function gracefulDisconnect() {
+            if (!cmdChar) {
+                debug('No active connection to disconnect');
+                return;
+            }
+
+            debug('=== Graceful Disconnect - Saving Battery ===');
+
+            try {
+                // Stop raw data streaming
+                debug('Stopping raw data mode...');
+                await cmdChar.writeValueWithoutResponse(stopRawData());
+                await sleep(50);
+
+                // Disable realtime HR streaming
+                debug('Disabling realtime HR...');
+                await cmdChar.writeValueWithoutResponse(disableRealtimeHr());
+                await sleep(50);
+
+                // Exit high frequency sync mode (saves significant battery)
+                debug('Exiting high-freq sync mode...');
+                await cmdChar.writeValueWithoutResponse(exitHighFreqSync());
+                await sleep(50);
+
+                debug('Cleanup commands sent - disconnecting...');
+            } catch (e) {
+                debug('Cleanup error (device may have disconnected): ' + e.message);
+            }
+
+            // Now disconnect the GATT server
+            if (device && device.gatt && device.gatt.connected) {
+                device.gatt.disconnect();
+            }
+        }
+
         function onDisconnect() {
             document.getElementById('status-dot').classList.remove('connected');
             document.getElementById('status-text').textContent = 'Disconnected';
@@ -3709,6 +3740,13 @@
             document.getElementById('wrist-status').classList.remove('visible');
             deviceStatus.batteryLevel = null;
             deviceStatus.isCharging = false;
+            cmdChar = null;  // Clear command characteristic reference
+
+            // Show connect screen again
+            document.getElementById('connect-screen').classList.remove('hidden');
+            document.getElementById('main-app').classList.remove('active');
+            document.getElementById('connect-btn').disabled = false;
+            document.getElementById('connect-btn').textContent = 'Connect';
         }
 
         const sleep = ms => new Promise(r => setTimeout(r, ms));
