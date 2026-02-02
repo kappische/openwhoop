@@ -1662,6 +1662,7 @@
             SET_CLOCK: 10,
             GET_CLOCK: 11,              // Get device time
             TOGGLE_GENERIC_HR: 14,      // Broadcast HR to other BLE devices
+            TOGGLE_R7_DATA: 16,         // Enable R7 data collection (may enable RR intervals)
             ABORT_HISTORICAL: 20,       // Stop historical data transfer
             SEND_HISTORICAL: 22,
             HISTORICAL_DATA_RESULT: 23, // Acknowledge historical data
@@ -1953,13 +1954,18 @@
             const rrCount = Math.min(data[15] || 0, 4);
 
             // Extract RR intervals (up to 4, 2 bytes each)
+            // Match Rust: skip zeros only, don't filter by range
             const rr = [];
             for (let i = 0; i < rrCount; i++) {
                 const offset = 16 + i * 2;
                 const rrVal = data[offset] | (data[offset + 1] << 8);
-                if (rrVal > 200 && rrVal < 2000) { // Valid RR interval (200-2000ms)
+                if (rrVal !== 0) {
                     rr.push(rrVal);
                 }
+            }
+            // Rust validates rr.length === rrCount, log if mismatch
+            if (rr.length !== rrCount && rrCount > 0) {
+                debug(`RR count mismatch: expected ${rrCount}, got ${rr.length} non-zero values`);
             }
 
             // Activity is at bytes 24-27
@@ -2649,8 +2655,15 @@
                 await cmdChar.writeValueWithoutResponse(setClock());
                 await sleep(100);
 
+                // Try to enable R7 data collection (may enable RR intervals in historical data)
+                // Rust has this command but commented out - let's try it
+                debug('Enabling R7 data collection...');
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_R7_DATA, [41, 1]));
+                await sleep(100);
+
                 // Request historical data using simple [0x00] format (like Rust implementation)
                 // This requests all available historical data from the device
+                // IMPORTANT: Don't enable realtime modes yet - they may interfere with historical stream
                 debug('Requesting historical data (all available)...');
                 const histPacket = createPacket(35, 0, 22, [0x00]);
                 debug(`Historical data request packet: ${Array.from(histPacket).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
@@ -2660,14 +2673,8 @@
                 debug('Sending enterHighFreqSync...');
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
                 await sleep(100);
-                debug('Sending enableRealtimeHr...');
-                await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
-                await sleep(100);
-
-                // Enable raw data mode for detailed RR intervals
-                debug('Enabling raw data mode for RR intervals...');
-                await cmdChar.writeValueWithoutResponse(startRawData());
-                await sleep(100);
+                // NOTE: Realtime HR and raw data modes moved to after historical sync completes
+                // to avoid interfering with historical data stream
 
                 debug('Sending getAlarmTime...');
                 await cmdChar.writeValueWithoutResponse(getAlarmTime());
@@ -2701,33 +2708,11 @@
                 await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.GET_BODY_LOCATION, [0x00]));
                 await sleep(100);
 
-                // Try to enable optical data for SpO2 readings
-                await sleep(200);
-                debug('Enabling optical data for SpO2...');
-                try {
-                    await cmdChar.writeValueWithoutResponse(enableOpticalData());
-                    sensorData.opticalDataEnabled = true;
-                    debug('Optical data command sent');
-                } catch (e) {
-                    debug('Optical data enable failed: ' + e.message);
-                }
-
-                // Try to start raw data stream (may include more sensor data)
-                await sleep(200);
-                debug('Starting raw data stream...');
-                try {
-                    await cmdChar.writeValueWithoutResponse(startRawData());
-                    sensorData.rawDataEnabled = true;
-                    debug('Raw data stream command sent');
-                } catch (e) {
-                    debug('Raw data stream failed: ' + e.message);
-                }
-
-                debug('All commands sent, waiting for data...');
+                debug('Waiting for historical data (realtime modes delayed to avoid interference)...');
 
                 // Process sleep data after a delay to allow historical packets to arrive
-                // Increased to 15 seconds since historical data can take time
-                setTimeout(() => {
+                // Then enable realtime modes after historical sync is complete
+                setTimeout(async () => {
                     // Log packet type summary for debugging
                     if (window.packetTypeCounts) {
                         const summary = Object.entries(window.packetTypeCounts)
@@ -2740,9 +2725,34 @@
                         debug(`Processing ${historicalData.length} historical readings...`);
                         processSleepData();
                     } else {
-                        debug('No historical data received after 15s, using real-time estimates');
+                        debug('No historical data received after 15s');
                         debug('This may mean the device has no recent sleep data stored');
                         debug('Expected type 47 packets - check if device has historical data');
+                    }
+
+                    // NOW enable realtime modes after historical sync is done
+                    debug('Historical sync complete, enabling realtime modes...');
+                    try {
+                        await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
+                        debug('Realtime HR enabled');
+                    } catch (e) {
+                        debug('Realtime HR failed: ' + e.message);
+                    }
+                    await sleep(100);
+                    try {
+                        await cmdChar.writeValueWithoutResponse(startRawData());
+                        sensorData.rawDataEnabled = true;
+                        debug('Raw data mode enabled');
+                    } catch (e) {
+                        debug('Raw data mode failed: ' + e.message);
+                    }
+                    await sleep(100);
+                    try {
+                        await cmdChar.writeValueWithoutResponse(enableOpticalData());
+                        sensorData.opticalDataEnabled = true;
+                        debug('Optical data enabled');
+                    } catch (e) {
+                        debug('Optical data failed: ' + e.message);
                     }
                 }, 15000);
 
