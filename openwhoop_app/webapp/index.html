@@ -1858,6 +1858,11 @@
         let batteryIntervalId = null;
         let alarmIntervalId = null;
 
+        // Auto-reconnect state
+        let intentionalDisconnect = false;
+        let reconnectAttempts = 0;
+        const maxReconnectAttempts = 3;
+
         // Historical/Sleep data from device
         let historicalData = []; // All historical readings
         let sleepData = {
@@ -1930,7 +1935,8 @@
             onWrist: true,              // Whether device is on wrist
             lastBatteryUpdate: 0,       // Timestamp of last battery update
             firmwareVersion: null,      // Firmware version string
-            deviceName: null            // Device advertising name
+            deviceName: null,           // Device advertising name
+            lowBatteryWarned: false     // Whether we've shown low battery warning this session
         };
 
         // Activity thresholds (from Whoop protocol)
@@ -3709,6 +3715,7 @@
                 return;
             }
 
+            intentionalDisconnect = true;  // Don't auto-reconnect
             debug('=== Graceful Disconnect - Saving Battery ===');
 
             try {
@@ -3740,8 +3747,6 @@
 
         function onDisconnect() {
             document.getElementById('status-dot').classList.remove('connected');
-            document.getElementById('status-text').textContent = 'Disconnected';
-            // Reset battery and hide wrist status
             document.getElementById('battery-status').textContent = '--%';
             document.getElementById('battery-status').classList.remove('charging', 'low');
             document.getElementById('wrist-status').classList.remove('visible');
@@ -3749,11 +3754,84 @@
             deviceStatus.isCharging = false;
             cmdChar = null;  // Clear command characteristic reference
 
-            // Show connect screen again
-            document.getElementById('connect-screen').classList.remove('hidden');
-            document.getElementById('main-app').classList.remove('active');
-            document.getElementById('connect-btn').disabled = false;
-            document.getElementById('connect-btn').textContent = 'Connect';
+            // If intentional disconnect, show connect screen
+            if (intentionalDisconnect) {
+                intentionalDisconnect = false;
+                reconnectAttempts = 0;
+                document.getElementById('status-text').textContent = 'Disconnected';
+                document.getElementById('connect-screen').classList.remove('hidden');
+                document.getElementById('main-app').classList.remove('active');
+                document.getElementById('connect-btn').disabled = false;
+                document.getElementById('connect-btn').textContent = 'Connect';
+                debug('Disconnected (user initiated)');
+                return;
+            }
+
+            // Unexpected disconnect - try to auto-reconnect
+            if (reconnectAttempts < maxReconnectAttempts && device) {
+                reconnectAttempts++;
+                const delay = Math.pow(2, reconnectAttempts) * 1000; // Exponential backoff: 2s, 4s, 8s
+                document.getElementById('status-text').textContent = `Reconnecting (${reconnectAttempts}/${maxReconnectAttempts})...`;
+                debug(`Connection lost - attempting reconnect ${reconnectAttempts}/${maxReconnectAttempts} in ${delay/1000}s...`);
+                setTimeout(() => attemptReconnect(), delay);
+            } else {
+                // Give up - show connect screen
+                reconnectAttempts = 0;
+                document.getElementById('status-text').textContent = 'Connection lost';
+                document.getElementById('connect-screen').classList.remove('hidden');
+                document.getElementById('main-app').classList.remove('active');
+                document.getElementById('connect-btn').disabled = false;
+                document.getElementById('connect-btn').textContent = 'Reconnect';
+                debug('Auto-reconnect failed - manual reconnection required');
+            }
+        }
+
+        // Attempt to reconnect to previously paired device
+        async function attemptReconnect() {
+            if (!device) {
+                debug('No device to reconnect to');
+                onDisconnect();
+                return;
+            }
+
+            try {
+                debug('Attempting GATT reconnect...');
+                const server = await device.gatt.connect();
+                debug('GATT reconnected');
+
+                const service = await server.getPrimaryService(WHOOP_SERVICE);
+                cmdChar = await service.getCharacteristic(CMD_TO_STRAP);
+
+                const dataChar = await service.getCharacteristic(DATA_FROM_STRAP);
+                await dataChar.startNotifications();
+                dataChar.addEventListener('characteristicvaluechanged', handleNotification);
+
+                // Re-initialize connection
+                await cmdChar.writeValueWithoutResponse(helloHarvard());
+                await sleep(100);
+                await cmdChar.writeValueWithoutResponse(setClock());
+                await sleep(100);
+                await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
+                await sleep(100);
+                await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
+                await sleep(100);
+                await cmdChar.writeValueWithoutResponse(startRawData());
+                await sleep(100);
+                await cmdChar.writeValueWithoutResponse(getBatteryLevel());
+
+                // Request historical data to backfill any gap
+                debug('Backfilling data from reconnect gap...');
+                await cmdChar.writeValueWithoutResponse(requestHistoricalData(Date.now() - (reconnectAttempts * 5000)));
+
+                reconnectAttempts = 0;
+                document.getElementById('status-dot').classList.add('connected');
+                document.getElementById('status-text').textContent = '';
+                debug('Reconnected successfully!');
+
+            } catch (e) {
+                debug('Reconnect failed: ' + e.message);
+                onDisconnect(); // Will retry or give up
+            }
         }
 
         // Background mode handlers - reduce device polling when app not visible
@@ -4237,7 +4315,54 @@
                 batteryEl.textContent = deviceStatus.isCharging ? `⚡${level}%` : `${level}%`;
                 batteryEl.classList.toggle('charging', deviceStatus.isCharging);
                 batteryEl.classList.toggle('low', level <= 20 && !deviceStatus.isCharging);
+
+                // Show low battery warning once per session
+                if (level <= 20 && !deviceStatus.isCharging && !deviceStatus.lowBatteryWarned) {
+                    deviceStatus.lowBatteryWarned = true;
+                    debug(`LOW BATTERY WARNING: ${level}%`);
+                    showLowBatteryAlert(level);
+                }
+
+                // Reset warning flag when charging (so it warns again next time)
+                if (deviceStatus.isCharging) {
+                    deviceStatus.lowBatteryWarned = false;
+                }
             }
+        }
+
+        function showLowBatteryAlert(level) {
+            // Try browser notification first
+            if ('Notification' in window && Notification.permission === 'granted') {
+                new Notification('Whoop Battery Low', {
+                    body: `Battery at ${level}% - charge soon to avoid losing tracking data`,
+                    icon: 'data:image/svg+xml,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100"><text y=".9em" font-size="90">🔋</text></svg>'
+                });
+            }
+
+            // Also show in-app alert
+            const alertDiv = document.createElement('div');
+            alertDiv.style.cssText = `
+                position: fixed; top: 60px; left: 50%; transform: translateX(-50%);
+                background: linear-gradient(135deg, #ff4444, #cc0000); color: white;
+                padding: 12px 20px; border-radius: 8px; z-index: 9999;
+                font-size: 13px; font-weight: 500; box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+                animation: slideDown 0.3s ease-out;
+            `;
+            alertDiv.innerHTML = `🔋 Battery Low (${level}%) - Charge soon!`;
+            document.body.appendChild(alertDiv);
+
+            // Add animation keyframes if not already added
+            if (!document.getElementById('alert-animations')) {
+                const style = document.createElement('style');
+                style.id = 'alert-animations';
+                style.textContent = `
+                    @keyframes slideDown { from { opacity: 0; transform: translateX(-50%) translateY(-20px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
+                `;
+                document.head.appendChild(style);
+            }
+
+            // Auto-dismiss after 5 seconds
+            setTimeout(() => alertDiv.remove(), 5000);
         }
 
         // Handle body location / wearing status response (cmd 84)
