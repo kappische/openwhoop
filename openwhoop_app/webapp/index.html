@@ -2869,10 +2869,29 @@
                 if (!window.packetTypeCounts) window.packetTypeCounts = {};
                 window.packetTypeCounts[packet.type] = (window.packetTypeCounts[packet.type] || 0) + 1;
 
-                // Log first historical packets (type 47) specifically
-                if (packet.type === 47 && window.packetTypeCounts[47] <= 5) {
-                    const hex = Array.from(packet.data.slice(0, 20)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                    debug(`HISTORICAL pkt #${window.packetTypeCounts[47]} (type 47): len=${packet.data.length} hex=${hex}`);
+                // Log first historical packets (type 47) with detailed analysis
+                if (packet.type === 47 && window.packetTypeCounts[47] <= 10) {
+                    const pktNum = window.packetTypeCounts[47];
+                    const len = packet.data.length;
+                    const hex = Array.from(packet.data.slice(0, 30)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+
+                    // Show key bytes for analysis
+                    const d = packet.data;
+                    const unix = d[4] | (d[5] << 8) | (d[6] << 16) | (d[7] << 24);
+                    const bpm = d[14];
+                    const rrCount = d[15];
+                    const timeStr = new Date(unix * 1000).toISOString();
+
+                    debug(`HIST#${pktNum} len=${len} bpm=${bpm} rrCnt=${rrCount} time=${timeStr}`);
+                    debug(`  bytes[0-29]: ${hex}`);
+
+                    // Log different packet sizes specially
+                    if (len !== 1917) {
+                        debug(`  *** UNUSUAL SIZE (not 1917): ${len} bytes - may have different structure`);
+                        // Show bytes 14-24 (BPM, RR count, RR intervals, activity)
+                        const keyBytes = Array.from(d.slice(14, 28)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                        debug(`  bytes[14-27] (bpm/rr/activity): ${keyBytes}`);
+                    }
                 }
 
                 processPacket(packet);
@@ -2887,6 +2906,15 @@
             if (packet.type === 47 && packet.data.length >= 28) {
                 // Parse only the first reading from the packet (like Rust does)
                 const reading = parseHistoricalReading(packet.data.slice(0, 28));
+
+                // Log rejected packets for analysis
+                if (reading && (reading.bpm < 30 || reading.bpm > 200)) {
+                    if (!window.rejectedPacketCount) window.rejectedPacketCount = 0;
+                    window.rejectedPacketCount++;
+                    if (window.rejectedPacketCount <= 5) {
+                        debug(`REJECTED pkt: bpm=${reading.bpm} (outside 30-200), len=${packet.data.length}, rrCount=${packet.data[15]}`);
+                    }
+                }
 
                 if (reading && reading.bpm >= 30 && reading.bpm <= 200) {
                     // Validate timestamp is reasonable (after 2020, before 2030)
@@ -3190,23 +3218,26 @@
             }
         }
 
-        // Update wrist status UI
         // Handle body location / wearing status response (cmd 84)
         function handleBodyLocationResponse(data) {
             const hex = Array.from(data).map(b => b.toString(16).padStart(2, '0')).join(' ');
             debug(`Body location response: ${hex}`);
 
-            // Response format (based on Rust): status + body_location + wearing_status
-            if (data.length >= 2) {
-                const bodyLocation = data[0]; // 0=unknown, 1=wrist, etc.
-                const wearingStatus = data[1]; // 0=not wearing, 1=wearing
+            // Response format observed: 00 00 01 00 00 00 00 00 00
+            // Byte 0: status (0 = success)
+            // Byte 1: unknown
+            // Byte 2: wearing status (0=not wearing, 1=wearing)
+            // Byte 3: body location (0=unknown, 1=left wrist, 2=right wrist, etc.)
+            if (data.length >= 3) {
+                const wearingStatus = data[2]; // 0=not wearing, 1=wearing
+                const bodyLocation = data.length >= 4 ? data[3] : 0;
 
                 deviceStatus.onWrist = wearingStatus === 1;
                 updateWristUI();
 
                 const locationNames = ['unknown', 'left wrist', 'right wrist', 'bicep', 'other'];
                 const locName = locationNames[bodyLocation] || 'unknown';
-                debug(`Wearing status: ${deviceStatus.onWrist ? 'on wrist' : 'off wrist'}, location: ${locName}`);
+                debug(`Wearing: ${deviceStatus.onWrist ? 'YES' : 'NO'} (byte[2]=${wearingStatus}), location: ${locName}`);
             }
         }
 
