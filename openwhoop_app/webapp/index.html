@@ -1318,12 +1318,20 @@
                         <span class="metric-card-unit">%</span>
                     </div>
                     <div class="metric-card-status" id="spo2-status">within 95% - 100%</div>
-                    <button id="spo2-request-btn" onclick="requestSpO2()"
-                        style="margin-top: 8px; padding: 6px 12px; font-size: 11px;
-                               background: var(--bg); border: 1px solid var(--border);
-                               border-radius: 6px; color: var(--text); cursor: pointer;">
-                        Request Reading
-                    </button>
+                    <div style="display: flex; gap: 6px; margin-top: 8px;">
+                        <button id="spo2-request-btn" onclick="requestSpO2()"
+                            style="padding: 6px 10px; font-size: 10px;
+                                   background: var(--bg); border: 1px solid var(--border);
+                                   border-radius: 6px; color: var(--text); cursor: pointer;">
+                            Test 1/5
+                        </button>
+                        <button onclick="restartHRStream()"
+                            style="padding: 6px 10px; font-size: 10px;
+                                   background: var(--bg); border: 1px solid var(--green);
+                                   border-radius: 6px; color: var(--green); cursor: pointer;">
+                            Restart HR
+                        </button>
+                    </div>
                 </div>
 
                 <!-- RHR -->
@@ -2024,7 +2032,40 @@
             }
         }
 
-        // Request SpO2 reading - sends optical sensor commands
+        // Restart HR stream after SpO2 testing breaks it
+        async function restartHRStream() {
+            if (!cmdChar) {
+                debug('Not connected');
+                return;
+            }
+
+            debug('=== Restarting HR Stream ===');
+            try {
+                // Disable optical modes first
+                debug('Disabling optical data...');
+                await cmdChar.writeValueWithoutResponse(disableOpticalData());
+                await sleep(100);
+
+                // Re-enable realtime HR
+                debug('Re-enabling realtime HR...');
+                await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
+                await sleep(100);
+
+                // Restart raw data with HR focus
+                debug('Restarting data stream...');
+                await cmdChar.writeValueWithoutResponse(startRawData());
+
+                debug('HR stream restarted - pulse should resume');
+                document.getElementById('spo2-status').textContent = 'HR restored';
+            } catch (e) {
+                debug('Restart error: ' + e.message);
+            }
+        }
+
+        // SpO2 test mode counter for cycling through different approaches
+        let spo2TestMode = 0;
+
+        // Request SpO2 reading - experimental testing with different parameters
         async function requestSpO2() {
             if (!cmdChar) {
                 debug('SpO2: Not connected to device');
@@ -2033,55 +2074,97 @@
             }
 
             const btn = document.getElementById('spo2-request-btn');
-            const originalText = btn.textContent;
-            btn.textContent = 'Requesting...';
+            btn.textContent = 'Testing...';
             btn.disabled = true;
 
+            // Cycle through different test modes
+            spo2TestMode = (spo2TestMode % 5) + 1;
+
             try {
-                debug('=== SpO2 Request Started ===');
+                debug(`=== SpO2 Test Mode ${spo2TestMode} ===`);
 
                 // Clear previous optical data
                 sensorData.rawOpticalValues = [];
-                sensorData.opticalDataEnabled = false;
-
-                // Command 107: Enable optical data stream
-                debug('Sending EnableOpticalData (cmd 107)...');
-                await cmdChar.writeValueWithoutResponse(enableOpticalData());
-                await sleep(200);
-
-                // Command 108: Toggle optical mode (may switch to SpO2 mode)
-                debug('Sending ToggleOpticalMode (cmd 108)...');
-                await cmdChar.writeValueWithoutResponse(toggleOpticalMode());
-                await sleep(200);
-
-                // Command 81: Start raw data stream (includes optical)
-                debug('Sending StartRawData (cmd 81)...');
-                await cmdChar.writeValueWithoutResponse(startRawData());
-                await sleep(100);
-
                 sensorData.opticalDataEnabled = true;
-                debug('Optical data commands sent - monitoring for data...');
-                debug('Keep device still on wrist for best results');
 
-                // Update UI
-                document.getElementById('spo2-status').textContent = 'measuring...';
+                switch (spo2TestMode) {
+                    case 1:
+                        // Original approach
+                        debug('Mode 1: Standard sequence (107, 108, 81)');
+                        await cmdChar.writeValueWithoutResponse(enableOpticalData());
+                        await sleep(200);
+                        await cmdChar.writeValueWithoutResponse(toggleOpticalMode());
+                        await sleep(200);
+                        await cmdChar.writeValueWithoutResponse(startRawData());
+                        break;
+
+                    case 2:
+                        // Try different optical mode values
+                        debug('Mode 2: Optical mode 0x02');
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.ENABLE_OPTICAL_DATA, [0x01]));
+                        await sleep(200);
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_OPTICAL_MODE, [0x02]));
+                        await sleep(200);
+                        await cmdChar.writeValueWithoutResponse(startRawData());
+                        break;
+
+                    case 3:
+                        // Try optical mode 0x00 (might be SpO2 specific)
+                        debug('Mode 3: Optical mode 0x00');
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_OPTICAL_MODE, [0x00]));
+                        await sleep(200);
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.ENABLE_OPTICAL_DATA, [0x01]));
+                        await sleep(200);
+                        await cmdChar.writeValueWithoutResponse(startRawData());
+                        break;
+
+                    case 4:
+                        // Try enabling with extended parameters
+                        debug('Mode 4: Extended enable params');
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.ENABLE_OPTICAL_DATA, [0x01, 0x01]));
+                        await sleep(200);
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_OPTICAL_MODE, [0x01, 0x01]));
+                        await sleep(200);
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.START_RAW_DATA, [0x01, 0x01]));
+                        break;
+
+                    case 5:
+                        // Try stopping HR first, then optical
+                        debug('Mode 5: Stop HR first, then optical');
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.ENABLE_REALTIME_HR, [0x00])); // Disable HR
+                        await sleep(300);
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_OPTICAL_MODE, [0x01]));
+                        await sleep(200);
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.ENABLE_OPTICAL_DATA, [0x01]));
+                        await sleep(200);
+                        await cmdChar.writeValueWithoutResponse(startRawData());
+                        debug('(HR disabled - use Restart HR button to restore)');
+                        break;
+                }
+
+                debug('Commands sent - monitoring 15s for optical data...');
+                document.getElementById('spo2-status').textContent = `test ${spo2TestMode}/5...`;
 
                 // Set a timeout to check if we got data
-                setTimeout(() => {
+                setTimeout(async () => {
                     if (sensorData.rawOpticalValues.length > 0) {
-                        debug(`SpO2: Received ${sensorData.rawOpticalValues.length} optical readings`);
+                        debug(`SpO2 Mode ${spo2TestMode}: Received ${sensorData.rawOpticalValues.length} optical readings!`);
                     } else {
-                        debug('SpO2: No optical data received after 10s');
-                        debug('Device may not support optical streaming or requires sleep mode');
-                        document.getElementById('spo2-status').textContent = 'no data received';
+                        debug(`SpO2 Mode ${spo2TestMode}: No optical data received`);
+                        document.getElementById('spo2-status').textContent = `mode ${spo2TestMode} - no data`;
                     }
-                    btn.textContent = originalText;
+                    btn.textContent = `Test ${spo2TestMode + 1 > 5 ? 1 : spo2TestMode + 1}/5`;
                     btn.disabled = false;
-                }, 10000);
+
+                    // Auto-restart HR after test (unless mode 5 which explicitly disables)
+                    if (spo2TestMode !== 5) {
+                        await restartHRStream();
+                    }
+                }, 15000);
 
             } catch (e) {
                 debug('SpO2 request error: ' + e.message);
-                btn.textContent = originalText;
+                btn.textContent = 'Test 1/5';
                 btn.disabled = false;
                 document.getElementById('spo2-status').textContent = 'request failed';
             }
