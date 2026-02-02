@@ -2797,19 +2797,45 @@
                         }
 
                         // Log first few packets fully to analyze for SpO2 data
-                        if (historicalData.length <= 5 && packet.data.length > 28) {
+                        if (historicalData.length <= 10 && packet.data.length > 28) {
                             const extra = packet.data.slice(28);
-                            const extraHex = Array.from(extra.slice(0, 40)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                            debug(`Historical extra bytes (${extra.length}): ${extraHex}...`);
-                            // Look for values in SpO2 range (85-100%)
+                            const fullHex = Array.from(extra).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                            debug(`Historical pkt #${historicalData.length} extra (${extra.length} bytes): ${fullHex}`);
+
+                            // Try to decode as floats (the test data shows float-like patterns)
+                            const floats = [];
+                            for (let i = 0; i + 4 <= extra.length; i += 4) {
+                                const buf = new ArrayBuffer(4);
+                                const view = new DataView(buf);
+                                view.setUint8(0, extra[i]);
+                                view.setUint8(1, extra[i + 1]);
+                                view.setUint8(2, extra[i + 2]);
+                                view.setUint8(3, extra[i + 3]);
+                                const f = view.getFloat32(0, true); // little endian
+                                if (f !== 0 && isFinite(f) && Math.abs(f) < 1000) {
+                                    floats.push(`[${i}]=${f.toFixed(3)}`);
+                                }
+                            }
+                            if (floats.length > 0) {
+                                debug(`Decoded floats: ${floats.join(', ')}`);
+                            }
+
+                            // Look for byte values that could be SpO2 (85-100) or scaled (850-1000)
                             const spo2Candidates = [];
-                            for (let i = 0; i < Math.min(extra.length, 50); i++) {
+                            for (let i = 0; i < extra.length; i++) {
                                 if (extra[i] >= 85 && extra[i] <= 100) {
-                                    spo2Candidates.push(`[${i+28}]=${extra[i]}`);
+                                    spo2Candidates.push(`byte[${i+28}]=${extra[i]}`);
+                                }
+                            }
+                            // Also check 16-bit values
+                            for (let i = 0; i + 1 < extra.length; i += 2) {
+                                const val16 = extra[i] | (extra[i+1] << 8);
+                                if (val16 >= 850 && val16 <= 1000) {
+                                    spo2Candidates.push(`u16[${i+28}]=${val16/10}%`);
                                 }
                             }
                             if (spo2Candidates.length > 0) {
-                                debug(`Possible SpO2 values: ${spo2Candidates.join(', ')}`);
+                                debug(`SpO2 candidates: ${spo2Candidates.join(', ')}`);
                             }
                         }
 
