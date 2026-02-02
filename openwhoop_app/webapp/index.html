@@ -2681,8 +2681,15 @@
                 debug('Sending enterHighFreqSync...');
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
                 await sleep(100);
-                // NOTE: Realtime HR and raw data modes moved to after historical sync completes
-                // to avoid interfering with historical data stream
+
+                // Enable realtime modes immediately - they run in parallel with historical
+                debug('Enabling realtime HR...');
+                await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
+                await sleep(100);
+                debug('Enabling raw data mode...');
+                await cmdChar.writeValueWithoutResponse(startRawData());
+                sensorData.rawDataEnabled = true;
+                await sleep(100);
 
                 debug('Sending getAlarmTime...');
                 await cmdChar.writeValueWithoutResponse(getAlarmTime());
@@ -2716,11 +2723,11 @@
                 await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.GET_BODY_LOCATION, [0x00]));
                 await sleep(100);
 
-                debug('Waiting for historical data (realtime modes delayed to avoid interference)...');
+                debug('Realtime + historical running in parallel...');
 
                 // Process sleep data after a delay to allow historical packets to arrive
-                // Then enable realtime modes after historical sync is complete
-                setTimeout(async () => {
+                // Realtime is already enabled and running in parallel
+                setTimeout(() => {
                     // Log packet type summary for debugging
                     if (window.packetTypeCounts) {
                         const summary = Object.entries(window.packetTypeCounts)
@@ -2735,51 +2742,6 @@
                     } else {
                         debug('No historical data received after 15s');
                         debug('This may mean the device has no recent sleep data stored');
-                        debug('Expected type 47 packets - check if device has historical data');
-                    }
-
-                    // NOW enable realtime modes after historical sync is done
-                    debug('Historical sync complete, enabling realtime modes...');
-
-                    // Stop historical data transfer first to allow realtime to work
-                    try {
-                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.ABORT_HISTORICAL, [0x00]));
-                        debug('Historical transfer aborted');
-                    } catch (e) {
-                        debug('Abort historical failed: ' + e.message);
-                    }
-                    await sleep(200);
-
-                    // Re-enter high frequency sync mode after aborting historical
-                    try {
-                        await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
-                        debug('Re-entered high freq sync');
-                    } catch (e) {
-                        debug('High freq sync failed: ' + e.message);
-                    }
-                    await sleep(100);
-
-                    try {
-                        await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
-                        debug('Realtime HR enabled');
-                    } catch (e) {
-                        debug('Realtime HR failed: ' + e.message);
-                    }
-                    await sleep(100);
-                    try {
-                        await cmdChar.writeValueWithoutResponse(startRawData());
-                        sensorData.rawDataEnabled = true;
-                        debug('Raw data mode enabled');
-                    } catch (e) {
-                        debug('Raw data mode failed: ' + e.message);
-                    }
-                    await sleep(100);
-                    try {
-                        await cmdChar.writeValueWithoutResponse(enableOpticalData());
-                        sensorData.opticalDataEnabled = true;
-                        debug('Optical data enabled');
-                    } catch (e) {
-                        debug('Optical data failed: ' + e.message);
                     }
                 }, 15000);
 
