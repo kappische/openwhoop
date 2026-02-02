@@ -5401,7 +5401,8 @@
                 nextScheduleId,
                 temperatureBaseline: sensorData.baselineTemp,
                 historicalData: recentHistorical,
-                lastHistoricalSave: Date.now()
+                lastHistoricalSave: Date.now(),
+                userAge: userSettings.age  // Preserve age setting
             }));
         }
 
@@ -5467,6 +5468,7 @@
                     const ageInput = document.getElementById('age-input');
                     if (ageInput) ageInput.value = userSettings.age;
                     updateZoneDisplay();
+                    debug(`Loaded age: ${userSettings.age}, max HR: ${220 - userSettings.age} bpm`);
                 }
                 // Update toggle state
                 const toggle = document.getElementById('alarm-toggle');
