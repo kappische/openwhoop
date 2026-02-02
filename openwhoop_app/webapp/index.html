@@ -2869,29 +2869,14 @@
                 if (!window.packetTypeCounts) window.packetTypeCounts = {};
                 window.packetTypeCounts[packet.type] = (window.packetTypeCounts[packet.type] || 0) + 1;
 
-                // Log first historical packets (type 47) with detailed analysis
-                if (packet.type === 47 && window.packetTypeCounts[47] <= 10) {
-                    const pktNum = window.packetTypeCounts[47];
-                    const len = packet.data.length;
-                    const hex = Array.from(packet.data.slice(0, 30)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-
-                    // Show key bytes for analysis
+                // Log first few historical packets (type 47) - skip 1921-byte raw sensor packets
+                if (packet.type === 47 && packet.data.length !== 1921 && window.packetTypeCounts[47] <= 5) {
                     const d = packet.data;
-                    const unix = d[4] | (d[5] << 8) | (d[6] << 16) | (d[7] << 24);
                     const bpm = d[14];
                     const rrCount = d[15];
+                    const unix = d[4] | (d[5] << 8) | (d[6] << 16) | (d[7] << 24);
                     const timeStr = new Date(unix * 1000).toISOString();
-
-                    debug(`HIST#${pktNum} len=${len} bpm=${bpm} rrCnt=${rrCount} time=${timeStr}`);
-                    debug(`  bytes[0-29]: ${hex}`);
-
-                    // Log different packet sizes specially
-                    if (len !== 1917) {
-                        debug(`  *** UNUSUAL SIZE (not 1917): ${len} bytes - may have different structure`);
-                        // Show bytes 14-24 (BPM, RR count, RR intervals, activity)
-                        const keyBytes = Array.from(d.slice(14, 28)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                        debug(`  bytes[14-27] (bpm/rr/activity): ${keyBytes}`);
-                    }
+                    debug(`HIST: bpm=${bpm} rrCnt=${rrCount} time=${timeStr} len=${packet.data.length}`);
                 }
 
                 processPacket(packet);
@@ -2904,17 +2889,14 @@
             // Following Rust implementation: each packet contains ONE reading (first 28 bytes)
             // The remaining bytes are sensor/calibration data, not additional readings
             if (packet.type === 47 && packet.data.length >= 28) {
+                // Skip 1921-byte packets - they're raw sensor data, not HR readings
+                // These have different structure (bytes 10-11 = 00 32 instead of 80 54)
+                if (packet.data.length === 1921) {
+                    return; // Skip silently - not HR data
+                }
+
                 // Parse only the first reading from the packet (like Rust does)
                 const reading = parseHistoricalReading(packet.data.slice(0, 28));
-
-                // Log rejected packets for analysis
-                if (reading && (reading.bpm < 30 || reading.bpm > 200)) {
-                    if (!window.rejectedPacketCount) window.rejectedPacketCount = 0;
-                    window.rejectedPacketCount++;
-                    if (window.rejectedPacketCount <= 5) {
-                        debug(`REJECTED pkt: bpm=${reading.bpm} (outside 30-200), len=${packet.data.length}, rrCount=${packet.data[15]}`);
-                    }
-                }
 
                 if (reading && reading.bpm >= 30 && reading.bpm <= 200) {
                     // Validate timestamp is reasonable (after 2020, before 2030)
@@ -3524,6 +3506,29 @@
                 rhrStatus.classList.remove('warning');
                 rhrStatus.textContent = rhr < 70 ? `estimating...` : `elevated > 70`;
                 if (rhr >= 70) rhrStatus.classList.add('warning');
+            }
+
+            // Stress from real-time BPM readings (requires 120+ readings)
+            if (readings.length >= MIN_STRESS_READINGS) {
+                const bpmValues = readings.slice(-MIN_STRESS_READINGS).map(r => r.bpm);
+                const stress = calculateStress(bpmValues);
+                if (stress !== null) {
+                    sleepMetrics.stress = stress;
+                    document.getElementById('stress-value').textContent = stress.toFixed(1);
+                    const stressStatus = document.getElementById('stress-status');
+                    stressStatus.classList.remove('warning');
+                    if (stress < 3) {
+                        stressStatus.textContent = 'low (realtime)';
+                    } else if (stress < 5) {
+                        stressStatus.textContent = 'moderate (realtime)';
+                    } else if (stress < 7) {
+                        stressStatus.textContent = 'elevated (realtime)';
+                        stressStatus.classList.add('warning');
+                    } else {
+                        stressStatus.textContent = 'high (realtime)';
+                        stressStatus.classList.add('warning');
+                    }
+                }
             }
 
             // HRV - only show real data from RR intervals, no estimates
