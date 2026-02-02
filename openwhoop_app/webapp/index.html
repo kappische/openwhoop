@@ -1668,6 +1668,30 @@
                     <span id="max-hr-value" style="color: var(--green); font-weight: 600;">--</span>
                     <span style="color: var(--text-secondary);"> bpm</span>
                 </div>
+                <div style="margin-top: 16px; padding: 12px; background: var(--bg); border-radius: 8px; font-size: 11px; line-height: 1.6;">
+                    <div style="color: var(--text); font-weight: 600; margin-bottom: 8px;">Features requiring age:</div>
+                    <div style="color: var(--text-secondary);">
+                        • VO2max estimate<br>
+                        • Accurate HR zones<br>
+                        • Strain score accuracy
+                    </div>
+                </div>
+            </div>
+
+            <div class="metric-card" style="padding: 20px; margin-top: 16px;">
+                <div class="metric-card-header">
+                    <span class="metric-card-icon">📡</span>
+                    <span class="metric-card-title">DATA REQUIREMENTS</span>
+                </div>
+                <div style="margin-top: 12px; font-size: 11px; line-height: 1.8; color: var(--text-secondary);">
+                    <div><span style="color: var(--green);">●</span> <strong>HR only:</strong> RHR, Stress, Strain, Recovery</div>
+                    <div><span style="color: var(--yellow);">●</span> <strong>RR intervals:</strong> HRV, Respiratory Rate, AFib detection, Ectopic beats</div>
+                    <div><span style="color: var(--red);">●</span> <strong>Age required:</strong> VO2max, accurate HR zones</div>
+                </div>
+                <div id="rr-data-status" style="margin-top: 12px; padding: 8px; background: var(--bg); border-radius: 6px; font-size: 11px;">
+                    <span style="color: var(--text-secondary);">RR data status: </span>
+                    <span id="rr-status-value" style="color: var(--text-secondary);">waiting for data...</span>
+                </div>
             </div>
 
             <div class="metric-card" style="padding: 20px; margin-top: 16px;">
@@ -2716,12 +2740,21 @@
         }
 
         // Update rhythm analysis UI
-        function updateRhythmUI() {
+        function updateRhythmUI(noData = false) {
             const statusEl = document.getElementById('rhythm-status');
             const valueEl = document.getElementById('rhythm-value');
             const detailEl = document.getElementById('rhythm-detail');
 
             if (!statusEl || !valueEl) return;
+
+            // Handle no RR data case
+            if (noData) {
+                valueEl.textContent = '--';
+                statusEl.textContent = 'no RR data from device';
+                statusEl.classList.remove('warning');
+                if (detailEl) detailEl.textContent = 'RR intervals required for rhythm analysis';
+                return;
+            }
 
             if (rhythmAnalysis.afibStatus === null) {
                 valueEl.textContent = '--';
@@ -2755,7 +2788,27 @@
                 if (rhythmAnalysis.afibProbability !== null) {
                     details.push(`${rhythmAnalysis.afibProbability}% AFib prob`);
                 }
+                if (rhythmAnalysis.totalBeatsAnalyzed > 0) {
+                    details.push(`${rhythmAnalysis.totalBeatsAnalyzed} beats`);
+                }
                 detailEl.textContent = details.join(' | ');
+            }
+        }
+
+        // Update RR data status indicator in settings
+        function updateRRStatus(hasData, count) {
+            const statusEl = document.getElementById('rr-status-value');
+            if (!statusEl) return;
+
+            if (hasData) {
+                statusEl.style.color = 'var(--green)';
+                statusEl.textContent = `receiving (${count} intervals)`;
+            } else if (count > 0) {
+                statusEl.style.color = 'var(--yellow)';
+                statusEl.textContent = `insufficient (${count}/30 needed)`;
+            } else {
+                statusEl.style.color = 'var(--red)';
+                statusEl.textContent = `not available`;
             }
         }
 
@@ -3101,6 +3154,14 @@
 
                 // Analyze heart rhythm for AFib and ectopic beats (uses same raw RR)
                 analyzeHeartRhythm(rawRR);
+
+                // Update RR status indicator
+                updateRRStatus(true, rawRR.length);
+            } else {
+                // No RR data - update UI to show this clearly
+                debug(`Rhythm analysis: insufficient RR data (${rawRR.length} intervals, need 30+)`);
+                updateRhythmUI(true);  // Show "no RR data" message
+                updateRRStatus(false, rawRR.length);
             }
 
             // SpO2 - only use real sensor data, no estimates
