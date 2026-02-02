@@ -1372,6 +1372,32 @@
                     <div class="metric-card-status" id="stress-status">calculating...</div>
                 </div>
 
+                <!-- Recovery Score -->
+                <div class="metric-card">
+                    <div class="metric-card-header">
+                        <span class="metric-card-icon">🔋</span>
+                        <span class="metric-card-title">RECOVERY</span>
+                    </div>
+                    <div class="metric-card-value">
+                        <span class="metric-card-number" id="recovery-value">--</span>
+                        <span class="metric-card-unit">%</span>
+                    </div>
+                    <div class="metric-card-status" id="recovery-status">calculating...</div>
+                </div>
+
+                <!-- VO2max -->
+                <div class="metric-card">
+                    <div class="metric-card-header">
+                        <span class="metric-card-icon">🏃</span>
+                        <span class="metric-card-title">VO2MAX</span>
+                    </div>
+                    <div class="metric-card-value">
+                        <span class="metric-card-number" id="vo2max-value">--</span>
+                        <span class="metric-card-unit">ml/kg/min</span>
+                    </div>
+                    <div class="metric-card-status" id="vo2max-status">calculating...</div>
+                </div>
+
                 <!-- Session Stats -->
                 <div class="metric-card">
                     <div class="metric-card-header">
@@ -1784,12 +1810,24 @@
             skinTemp: null,     // Skin temp from temperature events
             sleepDuration: null,
             sleepScore: null,
-            stress: null        // Stress score (0-10, from Rust algorithm)
+            stress: null,       // Stress score (0-10, from Rust algorithm)
+            recovery: null,     // Recovery score (0-100%)
+            vo2max: null        // Estimated VO2max
+        };
+
+        // Strain tracking (accumulated during session)
+        let strainData = {
+            zoneTime: [0, 0, 0, 0, 0, 0],  // Seconds in zones 0-5
+            totalStrain: 0,                 // Accumulated strain (0-21 scale)
+            peakHR: 0,                      // Peak HR during session
+            lastUpdate: 0                   // Timestamp of last update
         };
 
         // User settings (persisted to localStorage)
         let userSettings = {
-            age: null           // User's age for max HR calculation (220 - age)
+            age: null,          // User's age for max HR calculation (220 - age)
+            hrvBaseline: null,  // Personal HRV baseline for recovery calc
+            rhrBaseline: null   // Personal RHR baseline for recovery calc
         };
 
         // Real sensor data tracking
@@ -2224,6 +2262,151 @@
             return Math.round(Math.max(0, Math.min(100, score)));
         }
 
+        // Calculate Recovery Score (0-100%)
+        // Based on HRV, RHR, and sleep - higher is better (more recovered)
+        function calculateRecovery(hrv, rhr, sleepHours) {
+            if (!hrv && !rhr) return null;
+
+            let score = 0;
+            let components = 0;
+
+            // HRV component (40% weight) - higher HRV = better recovery
+            // Typical range: 20-100ms, normalize to 0-100
+            if (hrv !== null) {
+                // Use baseline if available, otherwise use population average (~50ms)
+                const baseline = userSettings.hrvBaseline || 50;
+                const hrvScore = Math.min(100, (hrv / baseline) * 50);
+                score += hrvScore * 0.4;
+                components++;
+            }
+
+            // RHR component (30% weight) - lower RHR = better recovery
+            // Typical range: 40-80 bpm
+            if (rhr !== null) {
+                // Use baseline if available, otherwise estimate from age
+                const baseline = userSettings.rhrBaseline || 60;
+                // Lower is better, so invert: 100 - (deviation * factor)
+                const rhrScore = Math.max(0, Math.min(100, 100 - ((rhr - baseline + 20) * 2)));
+                score += rhrScore * 0.3;
+                components++;
+            }
+
+            // Sleep component (30% weight) - more sleep = better recovery (up to 9h)
+            if (sleepHours !== null && sleepHours !== undefined) {
+                const sleepScore = Math.min(100, (sleepHours / 8) * 100);
+                score += sleepScore * 0.3;
+                components++;
+            }
+
+            // If we only have some components, scale up
+            if (components > 0 && components < 3) {
+                score = score / (components === 1 ? 0.4 : (components === 2 ? 0.7 : 1));
+            }
+
+            return Math.round(Math.max(0, Math.min(100, score)));
+        }
+
+        // Calculate Strain Score (0-21 scale like Whoop)
+        // Based on time in HR zones with exponential weighting
+        function calculateStrain(zoneSeconds) {
+            // Zone multipliers (exponential - higher zones contribute more)
+            const zoneMultipliers = [0, 1, 2, 4, 8, 16]; // Zone 0-5
+
+            let totalLoad = 0;
+            for (let zone = 0; zone <= 5; zone++) {
+                const minutes = zoneSeconds[zone] / 60;
+                totalLoad += minutes * zoneMultipliers[zone];
+            }
+
+            // Scale to 0-21 (Whoop's scale)
+            // Roughly: 60 min zone 5 = max strain (21)
+            // 60 * 16 = 960 load points = 21 strain
+            const strain = Math.min(21, (totalLoad / 960) * 21);
+
+            return Math.round(strain * 10) / 10;
+        }
+
+        // Update strain from current HR reading
+        function updateStrain(bpm) {
+            const now = Date.now();
+            const maxHR = getMaxHR();
+            const hrPercent = (bpm / maxHR) * 100;
+
+            // Determine zone
+            let zone = 0;
+            if (hrPercent >= 90) zone = 5;
+            else if (hrPercent >= 80) zone = 4;
+            else if (hrPercent >= 70) zone = 3;
+            else if (hrPercent >= 60) zone = 2;
+            else if (hrPercent >= 50) zone = 1;
+
+            // Calculate time delta (cap at 5 seconds to handle gaps)
+            const delta = strainData.lastUpdate > 0
+                ? Math.min(5, (now - strainData.lastUpdate) / 1000)
+                : 1;
+
+            // Accumulate zone time
+            strainData.zoneTime[zone] += delta;
+            strainData.lastUpdate = now;
+
+            // Update peak HR
+            if (bpm > strainData.peakHR) {
+                strainData.peakHR = bpm;
+            }
+
+            // Recalculate total strain
+            strainData.totalStrain = calculateStrain(strainData.zoneTime);
+
+            // Update UI
+            updateStrainUI();
+        }
+
+        // Calculate VO2max estimate using Uth-Sørensen-Overgaard-Pedersen formula
+        // VO2max = 15.3 × (HRmax / HRrest)
+        function calculateVO2max(rhr) {
+            if (!rhr || !userSettings.age) return null;
+
+            const maxHR = getMaxHR();
+            const vo2max = 15.3 * (maxHR / rhr);
+
+            return Math.round(vo2max * 10) / 10;
+        }
+
+        // Get fitness level description based on VO2max and age
+        function getFitnessLevel(vo2max, age) {
+            if (!vo2max || !age) return 'unknown';
+
+            // Simplified fitness categories (ml/kg/min)
+            // These are rough averages, actual tables vary by age and sex
+            if (vo2max >= 50) return 'excellent';
+            if (vo2max >= 43) return 'good';
+            if (vo2max >= 36) return 'average';
+            if (vo2max >= 30) return 'below average';
+            return 'poor';
+        }
+
+        // Update strain UI elements
+        function updateStrainUI() {
+            const strain = strainData.totalStrain;
+
+            // Update strain value
+            document.getElementById('strain-value-big').textContent = strain.toFixed(1);
+
+            // Update strain ring (0-21 scale to 0-100%)
+            const percent = (strain / 21) * 100;
+            updateRing('strain', percent, 'var(--yellow)');
+
+            // Update peak HR
+            if (strainData.peakHR > 0) {
+                document.getElementById('peak-hr').textContent = strainData.peakHR;
+            }
+
+            // Update time in zone (total elevated time: zones 2-5)
+            const elevatedSeconds = strainData.zoneTime.slice(2).reduce((a, b) => a + b, 0);
+            const elevatedMinutes = Math.round(elevatedSeconds / 60);
+            document.getElementById('time-zone').textContent = elevatedMinutes;
+        }
+
         // Smooth activity spikes (single-reading anomalies) - from Rust
         function smoothActivitySpikes(readings) {
             if (readings.length < 3) return readings;
@@ -2564,6 +2747,21 @@
 
             debug(`Metrics from ${metricsSource}: RHR=${sleepMetrics.rhr}, HRV=${sleepMetrics.hrv}, Stress=${sleepMetrics.stress?.toFixed(1)}, Resp=${sleepMetrics.respRate?.toFixed(1)}`);
 
+            // Calculate Recovery Score (requires HRV and/or RHR)
+            const sleepHours = sleepMetrics.sleepDuration ? sleepMetrics.sleepDuration / (1000 * 60 * 60) : null;
+            sleepMetrics.recovery = calculateRecovery(sleepMetrics.hrv, sleepMetrics.rhr, sleepHours);
+            if (sleepMetrics.recovery !== null) {
+                debug(`Recovery score: ${sleepMetrics.recovery}%`);
+            }
+
+            // Calculate VO2max estimate (requires RHR and age)
+            if (sleepMetrics.rhr && userSettings.age) {
+                sleepMetrics.vo2max = calculateVO2max(sleepMetrics.rhr);
+                if (sleepMetrics.vo2max !== null) {
+                    debug(`VO2max estimate: ${sleepMetrics.vo2max} ml/kg/min (${getFitnessLevel(sleepMetrics.vo2max)})`);
+                }
+            }
+
             // Update UI with calculated metrics
             updateSleepMetricsUI(metricsSource);
         }
@@ -2672,6 +2870,40 @@
                     stressStatus.textContent = `high ${sourceLabel}`;
                     stressStatus.classList.add('warning');
                 }
+            }
+
+            // Recovery display
+            if (sleepMetrics.recovery !== null) {
+                document.getElementById('recovery-value').textContent = sleepMetrics.recovery;
+                const recoveryStatus = document.getElementById('recovery-status');
+                recoveryStatus.classList.remove('warning');
+                if (sleepMetrics.recovery >= 67) {
+                    recoveryStatus.textContent = `green - ready ${sourceLabel}`;
+                } else if (sleepMetrics.recovery >= 34) {
+                    recoveryStatus.textContent = `yellow - moderate ${sourceLabel}`;
+                    recoveryStatus.classList.add('warning');
+                } else {
+                    recoveryStatus.textContent = `red - rest ${sourceLabel}`;
+                    recoveryStatus.classList.add('warning');
+                }
+            } else {
+                document.getElementById('recovery-value').textContent = '--';
+                document.getElementById('recovery-status').textContent = 'need HRV/RHR data';
+            }
+
+            // VO2max display
+            if (sleepMetrics.vo2max !== null) {
+                document.getElementById('vo2max-value').textContent = sleepMetrics.vo2max;
+                const vo2maxStatus = document.getElementById('vo2max-status');
+                vo2maxStatus.classList.remove('warning');
+                const fitnessLevel = getFitnessLevel(sleepMetrics.vo2max);
+                vo2maxStatus.textContent = `${fitnessLevel} ${sourceLabel}`;
+                if (fitnessLevel === 'poor' || fitnessLevel === 'fair') {
+                    vo2maxStatus.classList.add('warning');
+                }
+            } else {
+                document.getElementById('vo2max-value').textContent = '--';
+                document.getElementById('vo2max-status').textContent = userSettings.age ? 'need RHR data' : 'set age in settings';
             }
         }
 
@@ -3519,6 +3751,9 @@
             else if (hrPercent >= 60) zone = 2;
             else if (hrPercent >= 50) zone = 1;
             document.getElementById('hr-zone').textContent = `Zone ${zone}`;
+
+            // REAL-TIME: Update strain tracking
+            updateStrain(bpm);
 
             // REAL-TIME: Session stats (min/max/avg)
             document.getElementById('min-value').textContent = minBpm;
