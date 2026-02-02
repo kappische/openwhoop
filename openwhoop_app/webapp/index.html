@@ -1263,6 +1263,7 @@
                 <button onclick="copyLog()" class="debug-btn">Copy</button>
                 <button onclick="downloadLog()" class="debug-btn">Share</button>
                 <button onclick="clearLog()" class="debug-btn">Clear</button>
+                <button onclick="clearStorage()" class="debug-btn" style="color:#ff6b6b;">Reset</button>
             </div>
         </div>
         <div id="debug-log-area"></div>
@@ -1846,6 +1847,17 @@
             debug('Log cleared');
         }
 
+        function clearStorage() {
+            if (confirm('Clear all stored data? This will reset historical readings and metrics.')) {
+                localStorage.removeItem('whoopHistorical');
+                localStorage.removeItem('whoopAlarmSchedules');
+                historicalData = [];
+                sleepMetrics = { rhr: null, hrv: null, spo2: null, skinTemp: null, sleepDuration: null, sleepScore: null, stress: null };
+                debug('Storage cleared - refresh page to start fresh');
+                alert('Storage cleared. Please refresh the page.');
+            }
+        }
+
         // Init
         document.addEventListener('DOMContentLoaded', () => {
             canvas = document.getElementById('hr-chart');
@@ -1954,18 +1966,14 @@
             const rrCount = Math.min(data[15] || 0, 4);
 
             // Extract RR intervals (up to 4, 2 bytes each)
-            // Match Rust: skip zeros only, don't filter by range
+            // Filter to physiologically valid range: 300-1500ms (40-200 BPM)
             const rr = [];
             for (let i = 0; i < rrCount; i++) {
                 const offset = 16 + i * 2;
                 const rrVal = data[offset] | (data[offset + 1] << 8);
-                if (rrVal !== 0) {
+                if (rrVal >= 300 && rrVal <= 1500) {
                     rr.push(rrVal);
                 }
-            }
-            // Rust validates rr.length === rrCount, log if mismatch
-            if (rr.length !== rrCount && rrCount > 0) {
-                debug(`RR count mismatch: expected ${rrCount}, got ${rr.length} non-zero values`);
             }
 
             // Activity is at bytes 24-27
@@ -2732,6 +2740,16 @@
 
                     // NOW enable realtime modes after historical sync is done
                     debug('Historical sync complete, enabling realtime modes...');
+
+                    // Stop historical data transfer first to allow realtime to work
+                    try {
+                        await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.ABORT_HISTORICAL, [0x00]));
+                        debug('Historical transfer aborted');
+                    } catch (e) {
+                        debug('Abort historical failed: ' + e.message);
+                    }
+                    await sleep(100);
+
                     try {
                         await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
                         debug('Realtime HR enabled');
