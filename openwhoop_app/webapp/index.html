@@ -2261,6 +2261,9 @@
         // Parse historical packet (type 47) - extracts timestamp, BPM, RR intervals, activity
         // Each reading is 28 bytes in the packet
         let historicalParseCount = 0;
+        let totalRRReceived = 0;  // Track total RR intervals received across all packets
+        let packetsWithRR = 0;    // Track packets that have RR data
+
         function parseHistoricalReading(data) {
             if (data.length < 28) return null;
 
@@ -2276,6 +2279,18 @@
             const unix = data[4] | (data[5] << 8) | (data[6] << 16) | (data[7] << 24);
             const bpm = data[14];
             const rrCount = Math.min(data[15] || 0, 4);
+
+            // Track RR data reception
+            if (rrCount > 0) {
+                packetsWithRR++;
+                totalRRReceived += rrCount;
+                // Log every packet that has RR data - this is important!
+                const rrVals = [];
+                for (let i = 0; i < rrCount; i++) {
+                    rrVals.push(data[16 + i*2] | (data[17 + i*2] << 8));
+                }
+                debug(`*** RR DATA FOUND: count=${rrCount} values=[${rrVals.join(',')}] bpm=${bpm} ***`);
+            }
 
             // Extract RR intervals (up to 4, 2 bytes each)
             // Filter to physiologically valid range: 300-1500ms (40-200 BPM)
@@ -3551,9 +3566,19 @@
                 await sleep(100);
 
                 // Try to enable R7 data collection (may enable RR intervals in historical data)
-                // Rust has this command but commented out - let's try it
-                debug('Enabling R7 data collection...');
+                // Rust has this command but commented out - experimenting with different params
+                debug('Enabling R7 data collection (trying multiple params)...');
+
+                // Try param [41, 1] - original from Rust
                 await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_R7_DATA, [41, 1]));
+                await sleep(100);
+
+                // Try param [0x01] - simple enable
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_R7_DATA, [0x01]));
+                await sleep(100);
+
+                // Try param [0x01, 0x01] - extended enable
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.TOGGLE_R7_DATA, [0x01, 0x01]));
                 await sleep(100);
 
                 // Request historical data using simple [0x00] format (like Rust implementation)
@@ -3625,6 +3650,11 @@
 
                     if (historicalData.length > 0) {
                         debug(`Processing ${historicalData.length} historical readings...`);
+                        debug(`=== RR Summary: ${packetsWithRR} packets had RR data, ${totalRRReceived} total RR intervals ===`);
+                        if (packetsWithRR === 0) {
+                            debug('WARNING: No RR intervals received. HRV/rhythm analysis will not work.');
+                            debug('RR data may only be available after sleep or require different device state.');
+                        }
                         processSleepData();
                     } else {
                         debug('No historical data received after 15s');
@@ -3752,6 +3782,20 @@
                     const rrCount = d[15];
                     const unix = d[4] | (d[5] << 8) | (d[6] << 16) | (d[7] << 24);
                     const timeStr = new Date(unix * 1000).toISOString();
+
+                    // Detailed logging for first 5 packets to debug RR structure
+                    if (historicalPacketCount <= 5) {
+                        const bytes0_15 = Array.from(d.slice(0, 16)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                        const bytes16_27 = Array.from(d.slice(16, 28)).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                        debug(`HIST[${packet.data.length}]: ${bytes0_15}`);
+                        debug(`  RR area[16-27]: ${bytes16_27}`);
+                        // Try reading potential RR values
+                        const rr0 = d[16] | (d[17] << 8);
+                        const rr1 = d[18] | (d[19] << 8);
+                        const rr2 = d[20] | (d[21] << 8);
+                        const rr3 = d[22] | (d[23] << 8);
+                        debug(`  Potential RR: [${rr0}, ${rr1}, ${rr2}, ${rr3}] (byte15 says count=${rrCount})`);
+                    }
                     debug(`HIST: bpm=${bpm} rrCnt=${rrCount} time=${timeStr} len=${packet.data.length}`);
                 }
 
@@ -3853,6 +3897,13 @@
             else if (packet.type === 36) {
                 const hex = Array.from(packet.data.slice(0, 10)).map(b => b.toString(16).padStart(2, '0')).join(' ');
                 debug(`Cmd response #${packet.cmd}: ${hex}`);
+
+                // R7 Data Collection (cmd 16) response - may enable RR intervals
+                if (packet.cmd === CMD.TOGGLE_R7_DATA) {
+                    const hex = Array.from(packet.data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                    debug(`R7 DataCollection response (cmd 16): ${hex}`);
+                    debug(`  Status byte[0]: ${packet.data[0]} (0=OK)`);
+                }
 
                 // SendHistoricalData (cmd 22) response - indicates if historical data is coming
                 if (packet.cmd === 22) {
