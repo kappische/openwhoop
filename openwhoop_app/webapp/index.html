@@ -1067,6 +1067,25 @@
         }
         .debug-console.visible { display: block; }
         .debug-line { margin: 2px 0; }
+        .debug-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid var(--green);
+        }
+        .debug-btn {
+            background: transparent;
+            border: 1px solid var(--green);
+            color: var(--green);
+            padding: 4px 8px;
+            font-size: 10px;
+            cursor: pointer;
+            margin-left: 8px;
+            border-radius: 4px;
+        }
+        .debug-btn:hover { background: rgba(0,255,136,0.2); }
 
         /* Health Monitor Cards */
         .health-monitor-header {
@@ -1237,7 +1256,16 @@
     </div>
 
     <!-- Debug Console -->
-    <div class="debug-console" id="debug-console"></div>
+    <div class="debug-console" id="debug-console">
+        <div class="debug-controls">
+            <span style="font-weight:bold;">Debug Log</span>
+            <div>
+                <button onclick="downloadLog()" class="debug-btn">Download</button>
+                <button onclick="clearLog()" class="debug-btn">Clear</button>
+            </div>
+        </div>
+        <div id="debug-log-area"></div>
+    </div>
 
     <!-- Main App -->
     <div class="main" id="main-app">
@@ -1672,6 +1700,7 @@
         let alarmEnabled = false, currentAlarm = null;
         let sessionStart = Date.now();
         let debugEnabled = true;
+        let debugLog = []; // Store all logs for export
         let packetCount = 0;
 
         // Historical/Sleep data from device
@@ -1733,22 +1762,47 @@
 
         // Debug logging
         function debug(msg) {
+            const timestamp = new Date().toISOString();
+            const logLine = `[${timestamp}] ${msg}`;
+            debugLog.push(logLine);
+
             if (!debugEnabled) return;
             const console = document.getElementById('debug-console');
+            const logArea = document.getElementById('debug-log-area');
             const line = document.createElement('div');
             line.className = 'debug-line';
             line.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-            console.appendChild(line);
+            logArea.appendChild(line);
             console.scrollTop = console.scrollHeight;
-            // Keep only last 50 lines
-            while (console.children.length > 50) {
-                console.removeChild(console.firstChild);
+            // Keep only last 100 lines visible
+            while (logArea.children.length > 100) {
+                logArea.removeChild(logArea.firstChild);
             }
         }
 
         function toggleDebug() {
             const console = document.getElementById('debug-console');
             console.classList.toggle('visible');
+        }
+
+        function downloadLog() {
+            const content = debugLog.join('\n');
+            const blob = new Blob([content], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `whoop-debug-${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        }
+
+        function clearLog() {
+            debugLog = [];
+            const logArea = document.getElementById('debug-log-area');
+            logArea.innerHTML = '';
+            debug('Log cleared');
         }
 
         // Init
