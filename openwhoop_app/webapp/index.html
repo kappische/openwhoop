@@ -1854,6 +1854,7 @@
 
         // Background mode state - reduces polling when app not visible
         let isInBackground = false;
+        let backgroundStartTime = null;  // When we entered background (for backfill)
         let batteryIntervalId = null;
         let alarmIntervalId = null;
 
@@ -3759,6 +3760,7 @@
         async function enterBackgroundMode() {
             if (isInBackground) return;
             isInBackground = true;
+            backgroundStartTime = Date.now();
             debug('=== Entering Background Mode (saving battery) ===');
 
             if (cmdChar) {
@@ -3775,20 +3777,31 @@
         async function exitBackgroundMode() {
             if (!isInBackground) return;
             isInBackground = false;
-            debug('=== Exiting Background Mode (resuming) ===');
+            const bgDuration = backgroundStartTime ? Math.round((Date.now() - backgroundStartTime) / 1000) : 0;
+            debug(`=== Exiting Background Mode (was away ${bgDuration}s) ===`);
 
             if (cmdChar) {
                 try {
                     // Re-enable realtime HR streaming
                     await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
                     await sleep(50);
+
+                    // Backfill: request historical data from when we went to background
+                    // This ensures we don't miss any readings for metrics calculations
+                    if (backgroundStartTime && bgDuration > 10) {
+                        debug(`Backfilling ${bgDuration}s of missed data...`);
+                        await cmdChar.writeValueWithoutResponse(requestHistoricalData(backgroundStartTime));
+                    }
+
                     // Request fresh battery level
+                    await sleep(100);
                     await cmdChar.writeValueWithoutResponse(getBatteryLevel());
                     debug('Resumed realtime HR and refreshed battery');
                 } catch (e) {
                     debug('Resume error: ' + e.message);
                 }
             }
+            backgroundStartTime = null;
         }
 
         // Listen for page visibility changes
