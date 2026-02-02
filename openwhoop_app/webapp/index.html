@@ -1260,7 +1260,8 @@
         <div class="debug-controls">
             <span style="font-weight:bold;">Debug Log</span>
             <div>
-                <button onclick="downloadLog()" class="debug-btn">Download</button>
+                <button onclick="copyLog()" class="debug-btn">Copy</button>
+                <button onclick="downloadLog()" class="debug-btn">Share</button>
                 <button onclick="clearLog()" class="debug-btn">Clear</button>
             </div>
         </div>
@@ -1785,17 +1786,56 @@
             console.classList.toggle('visible');
         }
 
-        function downloadLog() {
+        async function downloadLog() {
             const content = debugLog.join('\n');
+            const filename = `whoop-debug-${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+
+            // Try Web Share API first (works on iOS)
+            if (navigator.share && navigator.canShare) {
+                const file = new File([content], filename, { type: 'text/plain' });
+                if (navigator.canShare({ files: [file] })) {
+                    try {
+                        await navigator.share({
+                            files: [file],
+                            title: 'Whoop Debug Log'
+                        });
+                        return;
+                    } catch (e) {
+                        if (e.name !== 'AbortError') {
+                            console.log('Share failed, trying fallback', e);
+                        } else {
+                            return; // User cancelled
+                        }
+                    }
+                }
+            }
+
+            // Fallback: standard download (works on desktop)
             const blob = new Blob([content], { type: 'text/plain' });
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = `whoop-debug-${new Date().toISOString().replace(/[:.]/g, '-')}.log`;
+            a.download = filename;
             document.body.appendChild(a);
             a.click();
             document.body.removeChild(a);
             URL.revokeObjectURL(url);
+        }
+
+        function copyLog() {
+            const content = debugLog.join('\n');
+            navigator.clipboard.writeText(content).then(() => {
+                debug('Log copied to clipboard (' + debugLog.length + ' lines)');
+            }).catch(err => {
+                // Fallback for older browsers
+                const textarea = document.createElement('textarea');
+                textarea.value = content;
+                document.body.appendChild(textarea);
+                textarea.select();
+                document.execCommand('copy');
+                document.body.removeChild(textarea);
+                debug('Log copied to clipboard (' + debugLog.length + ' lines)');
+            });
         }
 
         function clearLog() {
