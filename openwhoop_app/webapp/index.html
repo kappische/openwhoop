@@ -2748,6 +2748,15 @@
                     } catch (e) {
                         debug('Abort historical failed: ' + e.message);
                     }
+                    await sleep(200);
+
+                    // Re-enter high frequency sync mode after aborting historical
+                    try {
+                        await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
+                        debug('Re-entered high freq sync');
+                    } catch (e) {
+                        debug('High freq sync failed: ' + e.message);
+                    }
                     await sleep(100);
 
                     try {
