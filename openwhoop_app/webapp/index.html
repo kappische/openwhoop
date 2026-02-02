@@ -3767,6 +3767,13 @@
                 return;
             }
 
+            // If in background, don't try to reconnect now - wait until foreground
+            if (isInBackground) {
+                debug('Disconnected while in background - will reconnect when app returns to foreground');
+                document.getElementById('status-text').textContent = 'Reconnecting when active...';
+                return;
+            }
+
             // Unexpected disconnect - try to auto-reconnect
             if (reconnectAttempts < maxReconnectAttempts && device) {
                 reconnectAttempts++;
@@ -3857,6 +3864,15 @@
             isInBackground = false;
             const bgDuration = backgroundStartTime ? Math.round((Date.now() - backgroundStartTime) / 1000) : 0;
             debug(`=== Exiting Background Mode (was away ${bgDuration}s) ===`);
+
+            // Check if we got disconnected while in background
+            if (!cmdChar && device) {
+                debug('Was disconnected while in background - attempting reconnect...');
+                reconnectAttempts = 0;
+                attemptReconnect();
+                backgroundStartTime = null;
+                return;
+            }
 
             if (cmdChar) {
                 try {
