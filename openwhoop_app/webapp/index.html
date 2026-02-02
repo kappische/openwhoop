@@ -1318,6 +1318,12 @@
                         <span class="metric-card-unit">%</span>
                     </div>
                     <div class="metric-card-status" id="spo2-status">within 95% - 100%</div>
+                    <button id="spo2-request-btn" onclick="requestSpO2()"
+                        style="margin-top: 8px; padding: 6px 12px; font-size: 11px;
+                               background: var(--bg); border: 1px solid var(--border);
+                               border-radius: 6px; color: var(--text); cursor: pointer;">
+                        Request Reading
+                    </button>
                 </div>
 
                 <!-- RHR -->
@@ -2015,6 +2021,69 @@
                 sleepMetrics = { rhr: null, hrv: null, spo2: null, skinTemp: null, sleepDuration: null, sleepScore: null, stress: null };
                 debug('Storage cleared - refresh page to start fresh');
                 alert('Storage cleared. Please refresh the page.');
+            }
+        }
+
+        // Request SpO2 reading - sends optical sensor commands
+        async function requestSpO2() {
+            if (!cmdChar) {
+                debug('SpO2: Not connected to device');
+                alert('Please connect to the device first');
+                return;
+            }
+
+            const btn = document.getElementById('spo2-request-btn');
+            const originalText = btn.textContent;
+            btn.textContent = 'Requesting...';
+            btn.disabled = true;
+
+            try {
+                debug('=== SpO2 Request Started ===');
+
+                // Clear previous optical data
+                sensorData.rawOpticalValues = [];
+                sensorData.opticalDataEnabled = false;
+
+                // Command 107: Enable optical data stream
+                debug('Sending EnableOpticalData (cmd 107)...');
+                await cmdChar.writeValueWithoutResponse(enableOpticalData());
+                await sleep(200);
+
+                // Command 108: Toggle optical mode (may switch to SpO2 mode)
+                debug('Sending ToggleOpticalMode (cmd 108)...');
+                await cmdChar.writeValueWithoutResponse(toggleOpticalMode());
+                await sleep(200);
+
+                // Command 81: Start raw data stream (includes optical)
+                debug('Sending StartRawData (cmd 81)...');
+                await cmdChar.writeValueWithoutResponse(startRawData());
+                await sleep(100);
+
+                sensorData.opticalDataEnabled = true;
+                debug('Optical data commands sent - monitoring for data...');
+                debug('Keep device still on wrist for best results');
+
+                // Update UI
+                document.getElementById('spo2-status').textContent = 'measuring...';
+
+                // Set a timeout to check if we got data
+                setTimeout(() => {
+                    if (sensorData.rawOpticalValues.length > 0) {
+                        debug(`SpO2: Received ${sensorData.rawOpticalValues.length} optical readings`);
+                    } else {
+                        debug('SpO2: No optical data received after 10s');
+                        debug('Device may not support optical streaming or requires sleep mode');
+                        document.getElementById('spo2-status').textContent = 'no data received';
+                    }
+                    btn.textContent = originalText;
+                    btn.disabled = false;
+                }, 10000);
+
+            } catch (e) {
+                debug('SpO2 request error: ' + e.message);
+                btn.textContent = originalText;
+                btn.disabled = false;
+                document.getElementById('spo2-status').textContent = 'request failed';
             }
         }
 
@@ -3722,9 +3791,20 @@
                 if (packet.cmd === CMD.GET_BODY_LOCATION) {
                     handleBodyLocationResponse(packet.data);
                 }
-                // Log optical data response
-                if (packet.cmd === CMD.ENABLE_OPTICAL_DATA || packet.cmd === CMD.START_RAW_DATA) {
-                    debug(`Optical/Raw data response: ${Array.from(packet.data).map(b => b.toString(16).padStart(2, '0')).join(' ')}`);
+                // Log optical/SpO2 command responses
+                if (packet.cmd === CMD.ENABLE_OPTICAL_DATA) {
+                    const hex = Array.from(packet.data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                    debug(`EnableOpticalData response (cmd 107): ${hex}`);
+                    debug(`  Status: ${packet.data[0] === 0 ? 'OK' : 'Error ' + packet.data[0]}`);
+                }
+                if (packet.cmd === CMD.TOGGLE_OPTICAL_MODE) {
+                    const hex = Array.from(packet.data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                    debug(`ToggleOpticalMode response (cmd 108): ${hex}`);
+                    debug(`  Status: ${packet.data[0] === 0 ? 'OK' : 'Error ' + packet.data[0]}`);
+                }
+                if (packet.cmd === CMD.START_RAW_DATA) {
+                    const hex = Array.from(packet.data).map(b => b.toString(16).padStart(2, '0')).join(' ');
+                    debug(`StartRawData response (cmd 81): ${hex}`);
                 }
                 // Firmware version response (cmd 7)
                 if (packet.cmd === CMD.REPORT_VERSION_INFO) {
@@ -4065,35 +4145,62 @@
         function handleRawDataPacket(packet) {
             const data = packet.data;
 
-            // Log for debugging (only first few)
-            if (sensorData.rawOpticalValues.length < 10) {
-                const hex = Array.from(data.slice(0, 30)).map(b => b.toString(16).padStart(2, '0')).join(' ');
-                debug(`RAW DATA: ${hex}`);
+            // Enhanced logging for optical data debugging
+            if (sensorData.opticalDataEnabled || sensorData.rawOpticalValues.length < 20) {
+                const hex = Array.from(data.slice(0, Math.min(40, data.length)))
+                    .map(b => b.toString(16).padStart(2, '0')).join(' ');
+                debug(`RAW[${data.length}]: ${hex}${data.length > 40 ? '...' : ''}`);
+
+                // Try to identify data structure
+                if (data.length >= 4) {
+                    // Log potential interpretations
+                    const u16_0 = data[0] | (data[1] << 8);
+                    const u16_2 = data[2] | (data[3] << 8);
+                    const u32_0 = data[0] | (data[1] << 8) | (data[2] << 16) | (data[3] << 24);
+                    debug(`  Possible: u16[0]=${u16_0}, u16[2]=${u16_2}, u32[0]=${u32_0}`);
+                }
             }
 
             // Raw optical data typically contains:
-            // - Red LED readings (for SpO2)
-            // - IR LED readings (for SpO2)
-            // - Green LED readings (for HR)
+            // - Red LED readings (for SpO2) ~660nm
+            // - IR LED readings (for SpO2) ~940nm
+            // - Green LED readings (for HR) ~530nm
             // - Accelerometer data
 
             // SpO2 calculation requires ratio of red/IR absorption
             // R = (AC_red / DC_red) / (AC_ir / DC_ir)
             // SpO2 = 110 - 25 * R (simplified empirical formula)
 
-            // Try to parse optical values
+            // Try multiple parsing strategies
             if (data.length >= 12) {
-                // Attempt to extract red and IR values
-                // Format varies by device - this is experimental
+                // Strategy 1: 3-byte values (24-bit ADC readings)
                 const redValue = data[0] | (data[1] << 8) | (data[2] << 16);
                 const irValue = data[4] | (data[5] << 8) | (data[6] << 16);
 
-                if (redValue > 0 && irValue > 0) {
+                // Strategy 2: 2-byte values (16-bit ADC readings)
+                const red16 = data[0] | (data[1] << 8);
+                const ir16 = data[2] | (data[3] << 8);
+                const green16 = data[4] | (data[5] << 8);
+
+                // Use whichever seems more reasonable
+                let red = redValue, ir = irValue;
+                if (red16 > 100 && red16 < 65000 && ir16 > 100 && ir16 < 65000) {
+                    red = red16;
+                    ir = ir16;
+                }
+
+                if (red > 0 && ir > 0) {
                     sensorData.rawOpticalValues.push({
                         time: Date.now(),
-                        red: redValue,
-                        ir: irValue
+                        red: red,
+                        ir: ir,
+                        green: green16 || 0
                     });
+
+                    // Log periodically
+                    if (sensorData.rawOpticalValues.length % 10 === 0) {
+                        debug(`Optical: ${sensorData.rawOpticalValues.length} samples, red=${red}, ir=${ir}`);
+                    }
 
                     // Keep last 100 values
                     if (sensorData.rawOpticalValues.length > 100) {
