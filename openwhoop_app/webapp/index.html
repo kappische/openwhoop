@@ -1908,17 +1908,30 @@
 
         // Clean RR intervals like Rust: average RR intervals within each reading
         // This converts multiple RR intervals per reading into one averaged value
+        // Note: Rust doesn't filter by range - it trusts the device data
         function cleanRR(readings) {
             const cleaned = [];
             for (const reading of readings) {
                 if (!reading.rr || reading.rr.length === 0) continue;
-                const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
-                if (validRR.length === 0) continue;
                 // Average the RR intervals for this reading (like Rust's clean_rr)
-                const avg = validRR.reduce((a, b) => a + b, 0) / validRR.length;
+                // No filtering - Rust trusts the device data
+                const avg = reading.rr.reduce((a, b) => a + b, 0) / reading.rr.length;
                 cleaned.push(avg);
             }
             return cleaned;
+        }
+
+        // Get all raw RR intervals from readings (for respiratory rate calculation)
+        // Respiratory rate needs fine-grained beat-to-beat variability
+        function getRawRR(readings) {
+            const raw = [];
+            for (const reading of readings) {
+                if (!reading.rr || reading.rr.length === 0) continue;
+                // Filter to valid physiological range (40-200 bpm = 300-1500ms)
+                const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
+                raw.push(...validRR);
+            }
+            return raw;
         }
 
         // Calculate weighted RMSSD from sleep readings (like Whoop)
@@ -2272,6 +2285,12 @@
             // Get cleaned RR (one averaged value per reading, like Rust)
             const cleanedRR = cleanRR(readingsForHRV);
 
+            // Debug: show sample of cleaned RR values
+            if (cleanedRR.length > 0) {
+                const sampleCleaned = cleanedRR.slice(0, 5).map(r => Math.round(r));
+                debug(`Cleaned RR sample: [${sampleCleaned.join(', ')}] ms (${cleanedRR.length} total readings)`);
+            }
+
             if (useSleepData) {
                 debug(`Using sleep data: ${sleepReadings.length} readings, ${cleanedRR.length} cleaned RR values`);
                 sleepData.lastSleepStart = sleepStart;
@@ -2324,29 +2343,17 @@
                 debug(`RHR calculated from ${metricsSource}: ${sleepMetrics.rhr} bpm`);
             }
 
-            // Calculate HRV - use weighted sleep HRV if we have sleep data with timestamps
+            // Calculate HRV (like Rust: rolling HRV with 300-windows, average all values)
             // Note: cleanRR averages RR intervals within each reading (like Rust's clean_rr)
-            if (useSleepData && sleepReadings.length >= 10 && sleepStart && sleepEnd) {
-                // Use weighted HRV that emphasizes late-night sleep (like Whoop)
-                const weightedHRV = calculateWeightedSleepHRV(sleepReadings, sleepStart, sleepEnd);
-                if (weightedHRV !== null) {
-                    sleepMetrics.hrv = Math.round(weightedHRV);
-                    debug(`HRV (weighted late-night): ${sleepMetrics.hrv} ms`);
-                } else if (cleanedRR.length >= 10) {
-                    sleepMetrics.hrv = Math.round(calculateRMSSD(cleanedRR));
-                    debug(`HRV (RMSSD fallback): ${sleepMetrics.hrv} ms`);
-                }
-            } else if (cleanedRR.length >= 10) {
-                const sampleRR = cleanedRR.slice(0, 10);
-                debug(`Sample cleaned RR (avg per reading): [${sampleRR.map(r => r.toFixed(0)).join(', ')}] ms`);
-
+            if (cleanedRR.length >= 10) {
                 // Use rolling HRV if we have enough data (300 readings), otherwise simple RMSSD
                 if (cleanedRR.length >= 300) {
                     sleepMetrics.hrv = Math.round(calculateRollingHRV(cleanedRR));
                     debug(`HRV (rolling RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${cleanedRR.length} readings)`);
                 } else {
+                    // Not enough for rolling - use simple RMSSD
                     sleepMetrics.hrv = Math.round(calculateRMSSD(cleanedRR));
-                    debug(`HRV (RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${cleanedRR.length} readings)`);
+                    debug(`HRV (RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${cleanedRR.length} readings, need 300 for rolling)`);
                 }
             }
 
@@ -2356,10 +2363,11 @@
                 debug(`Stress score: ${sleepMetrics.stress?.toFixed(1)}/10`);
             }
 
-            // Calculate respiratory rate (using cleaned RR)
-            if (cleanedRR.length >= 30) {
-                sleepMetrics.respRate = calculateRespiratoryRate(cleanedRR);
-                debug(`Resp rate calculated from ${metricsSource}: ${sleepMetrics.respRate?.toFixed(1)} rpm`);
+            // Calculate respiratory rate (using RAW RR intervals - needs beat-to-beat variability)
+            const rawRR = getRawRR(readingsForHRV);
+            if (rawRR.length >= 30) {
+                sleepMetrics.respRate = calculateRespiratoryRate(rawRR);
+                debug(`Resp rate calculated from ${metricsSource}: ${sleepMetrics.respRate?.toFixed(1)} rpm (${rawRR.length} raw RR intervals)`);
             }
 
             // SpO2 and Skin Temp - use real sensor data if available
