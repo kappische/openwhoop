@@ -3671,7 +3671,7 @@
                 deviceStatus.onWrist = true;
                 updateWristUI();
 
-                // Set up periodic battery level refresh (every 30 seconds when active)
+                // Set up periodic battery level refresh (every 2 minutes when active)
                 // These are paused when app goes to background to save battery
                 batteryIntervalId = setInterval(async () => {
                     if (cmdChar && !isInBackground) {
@@ -3681,7 +3681,7 @@
                             debug('Battery refresh failed: ' + e.message);
                         }
                     }
-                }, 30 * 1000);
+                }, 120 * 1000);
 
                 // Set up periodic alarm refresh (every minute when active)
                 alarmIntervalId = setInterval(async () => {
