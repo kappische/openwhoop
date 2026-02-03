@@ -117,6 +117,23 @@
         .connect-btn:disabled {
             opacity: 0.5;
         }
+        .auto-connect-status {
+            color: var(--text-secondary);
+            font-size: 12px;
+            margin-bottom: 15px;
+            min-height: 18px;
+        }
+        .forget-device {
+            color: var(--text-secondary);
+            font-size: 11px;
+            margin-top: 20px;
+            cursor: pointer;
+            opacity: 0.7;
+        }
+        .forget-device:hover {
+            opacity: 1;
+            text-decoration: underline;
+        }
 
         /* Main Content */
         .main { display: none; }
@@ -1257,7 +1274,9 @@
     <div class="connect-screen" id="connect-screen">
         <div class="connect-logo">WHOOP</div>
         <div class="connect-subtitle">Open Source Heart Monitor</div>
+        <div class="auto-connect-status" id="auto-connect-status"></div>
         <button class="connect-btn" id="connect-btn" onclick="connect()">Connect</button>
+        <div class="forget-device" id="forget-device" onclick="forgetDevice()" style="display: none;">Forget Device</div>
     </div>
 
     <!-- Debug Console -->
@@ -2252,11 +2271,17 @@
         }
 
         // Init
-        document.addEventListener('DOMContentLoaded', () => {
+        document.addEventListener('DOMContentLoaded', async () => {
             canvas = document.getElementById('hr-chart');
             ctx = canvas.getContext('2d');
             loadFromStorage();
             debug('App initialized');
+
+            // Try to auto-connect to last known device
+            const autoConnected = await autoConnect();
+            if (!autoConnected) {
+                debug('Manual connection required');
+            }
         });
 
         // Tab Navigation
@@ -4203,6 +4228,12 @@
                 document.getElementById('main-app').classList.add('active');
                 document.getElementById('debug-console').classList.add('visible');
 
+                // Save device ID for auto-connect on next app launch
+                if (device && device.id) {
+                    localStorage.setItem('whoop_device_id', device.id);
+                    debug(`Saved device ID for auto-connect: ${device.id}`);
+                }
+
                 // Initialize wrist status as on-wrist (we just connected)
                 deviceStatus.onWrist = true;
                 updateWristUI();
@@ -4272,6 +4303,204 @@
             if (device && device.gatt && device.gatt.connected) {
                 device.gatt.disconnect();
             }
+        }
+
+        // Auto-connect to last known device on app launch
+        async function autoConnect() {
+            // Check if Web Bluetooth getDevices is supported
+            if (!navigator.bluetooth || !navigator.bluetooth.getDevices) {
+                debug('Auto-connect not supported (getDevices API unavailable)');
+                return false;
+            }
+
+            const savedDeviceId = localStorage.getItem('whoop_device_id');
+            if (!savedDeviceId) {
+                debug('No saved device ID for auto-connect');
+                return false;
+            }
+
+            // Show forget device option since we have a saved device
+            document.getElementById('forget-device').style.display = 'block';
+
+            debug(`Attempting auto-connect to saved device: ${savedDeviceId}`);
+            document.getElementById('auto-connect-status').textContent = 'Connecting to saved device...';
+
+            try {
+                // Get previously paired devices
+                const devices = await navigator.bluetooth.getDevices();
+                debug(`Found ${devices.length} previously paired device(s)`);
+
+                // Find the device matching our saved ID
+                const savedDevice = devices.find(d => d.id === savedDeviceId);
+                if (!savedDevice) {
+                    debug('Saved device not found in paired devices');
+                    document.getElementById('auto-connect-status').textContent = 'Device not found nearby';
+                    return false;
+                }
+
+                debug(`Found saved device: ${savedDevice.name || 'Unknown'}`);
+                device = savedDevice;
+
+                // Set up abort controller with timeout
+                const abortController = new AbortController();
+                const timeout = setTimeout(() => abortController.abort(), 10000);
+
+                // Watch for device to become available
+                savedDevice.addEventListener('advertisementreceived', async (event) => {
+                    clearTimeout(timeout);
+                    abortController.abort(); // Stop watching
+                    debug(`Device advertising detected, RSSI: ${event.rssi}`);
+                });
+
+                // Start watching for advertisements (device must be nearby)
+                try {
+                    await savedDevice.watchAdvertisements({ signal: abortController.signal });
+                } catch (e) {
+                    if (e.name !== 'AbortError') {
+                        debug(`Watch advertisements error: ${e.message}`);
+                    }
+                }
+
+                // Try to connect directly
+                debug('Attempting GATT connection...');
+                const server = await device.gatt.connect();
+                debug('GATT connected via auto-connect');
+
+                const service = await server.getPrimaryService(WHOOP_SERVICE);
+                debug('Got primary service');
+
+                cmdChar = await service.getCharacteristic(CMD_TO_STRAP);
+                debug('Got CMD_TO_STRAP characteristic');
+
+                const dataChar = await service.getCharacteristic(DATA_FROM_STRAP);
+                await dataChar.startNotifications();
+                dataChar.addEventListener('characteristicvaluechanged', handleNotification);
+                debug('DATA_FROM_STRAP notifications started');
+
+                try {
+                    const cmdFromChar = await service.getCharacteristic(CMD_FROM_STRAP);
+                    await cmdFromChar.startNotifications();
+                    cmdFromChar.addEventListener('characteristicvaluechanged', handleNotification);
+                    debug('CMD_FROM_STRAP notifications started');
+                } catch (e) {
+                    debug('CMD_FROM_STRAP not available: ' + e.message);
+                }
+
+                try {
+                    const eventsChar = await service.getCharacteristic(EVENTS_FROM_STRAP);
+                    await eventsChar.startNotifications();
+                    eventsChar.addEventListener('characteristicvaluechanged', handleNotification);
+                    debug('EVENTS_FROM_STRAP notifications started');
+                } catch (e) {
+                    debug('EVENTS_FROM_STRAP not available: ' + e.message);
+                }
+
+                // Initialize connection
+                debug('Sending helloHarvard...');
+                await cmdChar.writeValueWithoutResponse(helloHarvard());
+                await sleep(100);
+                debug('Sending setClock...');
+                await cmdChar.writeValueWithoutResponse(setClock());
+                await sleep(100);
+
+                debug('Requesting historical data...');
+                const histPacket = createPacket(35, 0, 22, [0x00]);
+                await cmdChar.writeValueWithoutResponse(histPacket);
+                await sleep(2000);
+
+                debug('Sending enterHighFreqSync...');
+                await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
+                await sleep(100);
+
+                debug('Enabling realtime HR...');
+                await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
+                await sleep(100);
+                debug('Enabling raw data mode...');
+                await cmdChar.writeValueWithoutResponse(startRawData());
+                sensorData.rawDataEnabled = true;
+                await sleep(100);
+
+                debug('Sending getAlarmTime...');
+                await cmdChar.writeValueWithoutResponse(getAlarmTime());
+                await sleep(100);
+
+                if (globalAlarmEnabled && schedules && schedules.length > 0) {
+                    const nextAlarm = getNextScheduledAlarmFromSchedules();
+                    if (nextAlarm) {
+                        debug('Syncing scheduled alarm to device...');
+                        await doSetAlarm(nextAlarm, true);
+                    }
+                }
+                await sleep(100);
+
+                debug('Requesting battery level...');
+                await cmdChar.writeValueWithoutResponse(getBatteryLevel());
+                await sleep(100);
+
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.REPORT_VERSION_INFO, [0x00]));
+                await sleep(100);
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.GET_ADVERTISING_NAME, [0x00]));
+                await sleep(100);
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.GET_BODY_LOCATION, [0x00]));
+                await sleep(100);
+
+                // Process historical data after delay
+                setTimeout(() => {
+                    if (historicalData.length > 0) {
+                        debug(`Processing ${historicalData.length} historical readings...`);
+                        processSleepData();
+                    }
+                }, 15000);
+
+                // Update UI for connected state
+                document.getElementById('status-dot').classList.add('connected');
+                document.getElementById('status-text').textContent = '';
+                document.getElementById('connect-screen').classList.add('hidden');
+                document.getElementById('main-app').classList.add('active');
+                document.getElementById('debug-console').classList.add('visible');
+
+                deviceStatus.onWrist = true;
+                updateWristUI();
+
+                // Set up periodic battery refresh
+                batteryIntervalId = setInterval(async () => {
+                    if (cmdChar && !isInBackground) {
+                        try {
+                            await cmdChar.writeValueWithoutResponse(getBatteryLevel());
+                        } catch (e) {
+                            debug('Battery refresh failed: ' + e.message);
+                        }
+                    }
+                }, 120 * 1000);
+
+                // Set up periodic alarm refresh
+                alarmIntervalId = setInterval(async () => {
+                    if (cmdChar && !isInBackground && globalAlarmEnabled && schedules.length > 0) {
+                        await refreshAlarmIfNeeded();
+                    }
+                }, 60 * 1000);
+
+                device.addEventListener('gattserverdisconnected', onDisconnect);
+                debug('Auto-connect successful!');
+                return true;
+
+            } catch (e) {
+                debug('Auto-connect failed: ' + e.message);
+                document.getElementById('auto-connect-status').textContent = 'Could not auto-connect';
+                // Show forget device option if we have a saved device
+                if (localStorage.getItem('whoop_device_id')) {
+                    document.getElementById('forget-device').style.display = 'block';
+                }
+                return false;
+            }
+        }
+
+        // Clear saved device ID so user can pair a different device
+        function forgetDevice() {
+            localStorage.removeItem('whoop_device_id');
+            document.getElementById('forget-device').style.display = 'none';
+            document.getElementById('auto-connect-status').textContent = '';
+            debug('Forgot saved device - will need to pair again');
         }
 
         function onDisconnect() {
