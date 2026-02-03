@@ -3850,10 +3850,14 @@
                     sleepMetrics.hrv = Math.round(calculateRMSSD(rawRRforHRV));
                     debug(`HRV (RMSSD, raw RR) from ${metricsSource}: ${sleepMetrics.hrv} ms (${rawRRforHRV.length} raw intervals)`);
                 }
-            } else if (cleanedRR.length >= 10) {
+            } else if (cleanedRR.length >= 60) {
                 // Fallback: not enough raw RR, use averaged (less accurate)
+                // Require at least 60 readings (~1 minute) for any reliability
                 sleepMetrics.hrv = Math.round(calculateRMSSD(cleanedRR));
                 debug(`HRV (RMSSD, averaged) from ${metricsSource}: ${sleepMetrics.hrv} ms (${cleanedRR.length} readings, insufficient raw RR)`);
+            } else {
+                // Not enough data for reliable HRV - leave as null
+                debug(`HRV: insufficient data (${rawRRforHRV.length} raw RR, ${cleanedRR.length} cleaned readings - need 30+ raw or 60+ cleaned)`);
             }
 
             // Calculate stress score (from Rust algorithm)
