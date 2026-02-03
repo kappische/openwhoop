@@ -1474,10 +1474,6 @@
                     <span class="metric-label">Time in Zone</span>
                     <span><span class="metric-value" id="time-zone">--</span><span class="metric-unit">min</span></span>
                 </div>
-                <div class="metric-row">
-                    <span class="metric-label">Calories</span>
-                    <span><span class="metric-value" id="calories">--</span><span class="metric-unit">cal</span></span>
-                </div>
             </div>
         </div>
 
@@ -2569,6 +2565,64 @@
             return Math.round(strain * 10) / 10;
         }
 
+        // Calculate strain from historical data (for day strain)
+        function calculateStrainFromHistory() {
+            if (historicalData.length < 10) return;
+
+            const now = new Date();
+            const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+
+            // Get today's readings only
+            const todayReadings = historicalData.filter(r => r.time.getTime() >= todayStart);
+
+            if (todayReadings.length < 5) {
+                debug(`Day strain: only ${todayReadings.length} readings today`);
+                return;
+            }
+
+            const maxHR = getMaxHR();
+            const zoneSeconds = [0, 0, 0, 0, 0, 0];
+            let peakHR = 0;
+
+            // Each historical reading represents ~6 seconds
+            const secondsPerReading = 6;
+
+            for (const reading of todayReadings) {
+                const bpm = reading.bpm;
+                if (bpm < 30 || bpm > 220) continue;
+
+                const hrPercent = (bpm / maxHR) * 100;
+
+                // Determine zone
+                let zone = 0;
+                if (hrPercent >= 90) zone = 5;
+                else if (hrPercent >= 80) zone = 4;
+                else if (hrPercent >= 70) zone = 3;
+                else if (hrPercent >= 60) zone = 2;
+                else if (hrPercent >= 50) zone = 1;
+
+                zoneSeconds[zone] += secondsPerReading;
+
+                if (bpm > peakHR) peakHR = bpm;
+            }
+
+            // Calculate strain
+            const strain = calculateStrain(zoneSeconds);
+
+            // Update strainData with historical values
+            strainData.zoneTime = zoneSeconds;
+            strainData.totalStrain = strain;
+            strainData.peakHR = Math.max(strainData.peakHR, peakHR);
+
+            // Calculate total time in elevated zones (2+)
+            const activeSeconds = zoneSeconds[2] + zoneSeconds[3] + zoneSeconds[4] + zoneSeconds[5];
+            const activeMinutes = Math.round(activeSeconds / 60);
+
+            debug(`Day strain from history: ${strain.toFixed(1)} (${todayReadings.length} readings, peak ${peakHR} bpm, ${activeMinutes}min in zone)`);
+
+            updateStrainUI();
+        }
+
         // Update strain from current HR reading
         function updateStrain(bpm) {
             const now = Date.now();
@@ -3007,7 +3061,19 @@
 
             // Update strain ring (0-21 scale to 0-100%)
             const percent = (strain / 21) * 100;
-            updateRing('strain', percent, 'var(--yellow)');
+            const ring = document.getElementById('strain-ring-big');
+            if (ring) {
+                const offset = 264 - (264 * percent / 100);
+                ring.style.strokeDashoffset = offset;
+                // Color based on strain level
+                if (strain >= 14) {
+                    ring.style.stroke = 'var(--red)';
+                } else if (strain >= 7) {
+                    ring.style.stroke = 'var(--yellow)';
+                } else {
+                    ring.style.stroke = 'var(--green)';
+                }
+            }
 
             // Update peak HR
             if (strainData.peakHR > 0) {
@@ -3463,6 +3529,9 @@
 
             // Update UI with calculated metrics
             updateSleepMetricsUI(metricsSource);
+
+            // Calculate day strain from today's historical data
+            calculateStrainFromHistory();
         }
 
         function updateSleepMetricsUI(source = 'device') {
