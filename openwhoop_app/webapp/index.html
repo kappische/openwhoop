@@ -3604,6 +3604,57 @@
                 document.getElementById('vo2max-value').textContent = '--';
                 document.getElementById('vo2max-status').textContent = userSettings.age ? 'need RHR data' : 'set age in settings';
             }
+
+            // === Update Sleep Tab ===
+            const sleepNeededMs = 8 * 60 * 60 * 1000; // 8 hours baseline
+
+            // Sleep Performance score (ring)
+            if (sleepMetrics.sleepScore !== null) {
+                const score = sleepMetrics.sleepScore;
+                document.getElementById('sleep-value').textContent = `${score}%`;
+
+                // Update ring (264 = full circumference)
+                const offset = 264 - (264 * score / 100);
+                const ring = document.getElementById('sleep-ring');
+                ring.style.strokeDashoffset = offset;
+
+                // Color based on score
+                if (score >= 85) {
+                    ring.style.stroke = 'var(--green)';
+                } else if (score >= 70) {
+                    ring.style.stroke = 'var(--yellow)';
+                } else {
+                    ring.style.stroke = 'var(--red)';
+                }
+            }
+
+            // Time Asleep
+            if (sleepMetrics.sleepDuration) {
+                const hours = Math.floor(sleepMetrics.sleepDuration / (1000 * 60 * 60));
+                const mins = Math.floor((sleepMetrics.sleepDuration % (1000 * 60 * 60)) / (1000 * 60));
+                document.getElementById('sleep-duration').textContent = `${hours}h ${mins}m`;
+
+                // Sleep Needed (baseline 8 hours)
+                document.getElementById('sleep-needed').textContent = '8h 0m';
+
+                // Sleep Debt (negative = deficit, positive = surplus)
+                const debtMs = sleepMetrics.sleepDuration - sleepNeededMs;
+                const debtHours = Math.floor(Math.abs(debtMs) / (1000 * 60 * 60));
+                const debtMins = Math.floor((Math.abs(debtMs) % (1000 * 60 * 60)) / (1000 * 60));
+                const debtEl = document.getElementById('sleep-debt');
+                if (debtMs >= 0) {
+                    debtEl.textContent = `+${debtHours}h ${debtMins}m`;
+                    debtEl.style.color = 'var(--green)';
+                } else {
+                    debtEl.textContent = `-${debtHours}h ${debtMins}m`;
+                    debtEl.style.color = 'var(--red)';
+                }
+            }
+
+            // Also show sleep times if we have them
+            if (sleepData.lastSleepStart && sleepData.lastSleepEnd) {
+                debug(`Sleep Tab updated: ${sleepData.lastSleepStart.toLocaleTimeString()} - ${sleepData.lastSleepEnd.toLocaleTimeString()}`);
+            }
         }
 
         // Connect
