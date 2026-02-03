@@ -2087,21 +2087,7 @@
                 } : null
             };
 
-            // Output to console in a format that can be copy/pasted
-            console.log('=== WHOOP RAW DATA EXPORT ===');
-            console.log('Summary:', exportData.summary);
-            console.log('Current Metrics:', exportData.currentMetrics);
-            console.log('---');
-            console.log('BPM Array (for RHR testing):');
-            console.log(JSON.stringify(exportData.rawData.bpms));
-            console.log('---');
-            console.log('RR Interval Array (for HRV/RespRate testing):');
-            console.log(JSON.stringify(exportData.rawData.rrIntervals));
-            console.log('---');
-            console.log('Full Export (JSON):');
-            console.log(JSON.stringify(exportData, null, 2));
-
-            // Also put compact version in debug log
+            // Log summary to debug area
             debug(`=== Data Export ===`);
             debug(`Readings: ${exportData.historicalReadings}, BPMs: ${exportData.summary.totalBPMs}, RR intervals: ${exportData.summary.totalRRIntervals}`);
             if (exportData.summary.bpmRange) {
@@ -2111,22 +2097,20 @@
                 debug(`RR range: ${exportData.summary.rrRange.min}-${exportData.summary.rrRange.max}ms (avg ${exportData.summary.rrRange.avg}ms)`);
             }
             debug(`Current metrics: RHR=${sleepMetrics.rhr}, HRV=${sleepMetrics.hrv}, RespRate=${sleepMetrics.respRate?.toFixed(1)}`);
-            debug(`Open browser console (F12) to see full raw arrays for copy/paste`);
 
-            // Copy summary to clipboard
-            const clipboardText = `WHOOP Data Export (${new Date().toLocaleString()})
-Readings: ${exportData.historicalReadings}
-BPMs: ${exportData.summary.totalBPMs}
-RR Intervals: ${exportData.summary.totalRRIntervals}
-Current Metrics: RHR=${sleepMetrics.rhr} HRV=${sleepMetrics.hrv} RespRate=${sleepMetrics.respRate?.toFixed(1)}
+            // Download as JSON file (works on mobile)
+            const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+            a.href = url;
+            a.download = `whoop-export-${timestamp}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
 
-See browser console (F12) for full raw data arrays.`;
-
-            navigator.clipboard.writeText(clipboardText).then(() => {
-                alert('Data exported to console (F12)!\n\nSummary copied to clipboard.');
-            }).catch(() => {
-                alert('Data exported to console (F12)!');
-            });
+            debug(`Downloaded whoop-export-${timestamp}.json`);
         }
 
         // Restart HR stream after SpO2 testing breaks it
