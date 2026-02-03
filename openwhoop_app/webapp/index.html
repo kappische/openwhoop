@@ -3577,12 +3577,6 @@
             return Math.max(8, Math.min(25, Math.round(breathsPerMinute * 10) / 10));
         }
 
-            if (durationMinutes < 0.5) return null;
-
-            const breathsPerMinute = peaks / durationMinutes;
-            return Math.max(8, Math.min(25, breathsPerMinute));
-        }
-
         // Process historical data to find sleep and calculate metrics
         function processSleepData() {
             if (historicalData.length < 10) {
