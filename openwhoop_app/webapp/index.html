@@ -1911,7 +1911,9 @@
         // Heart rhythm analysis (AFib, ectopic beats)
         let rhythmAnalysis = {
             afibProbability: null,      // 0-100% probability of AFib
+            afibConfidence: null,       // 'low', 'medium', 'high' confidence level
             afibStatus: null,           // 'normal', 'irregular', 'afib_warning'
+            afibMetrics: null,          // Detailed metrics used in calculation
             ectopicCount: 0,            // Number of detected ectopic beats
             ectopicBurden: null,        // Percentage of beats that are ectopic
             hrvEntropy: null,           // Shannon entropy of RR intervals
@@ -1920,7 +1922,7 @@
             turningPointRatio: null,    // Turning point ratio
             hrtTurbulenceOnset: null,   // Heart Rate Turbulence onset
             hrtTurbulenceSlope: null,   // Heart Rate Turbulence slope
-            totalBeatsAnalyzed: 0,      // Total RR intervals analyzed
+            totalBeatsAnalyzed: 0,      // Total RR intervals analyzed (after ectopic filtering)
             lastAnalysis: 0             // Timestamp of last analysis
         };
 
@@ -2687,8 +2689,61 @@
         // ============================================
         // DISCLAIMER: This is screening only, NOT a medical diagnosis.
         // Always consult a healthcare provider for cardiac concerns.
+        //
+        // Metrics used (all validated in peer-reviewed literature):
+        // 1. Sample Entropy (SampEn) - robust for short, noisy data
+        // 2. Coefficient of Variation (CV) - basic irregularity measure
+        // 3. RMSSD/SDNN ratio - short vs long-term variability
+        // 4. Poincaré SD1/SD2 ratio - geometric HRV analysis
+        // 5. Turning Point Ratio - direction change frequency
+        // 6. Median Absolute Deviation (MAD) - robust to outliers
 
-        // Calculate Shannon Entropy of RR intervals
+        // Minimum beats for reliable AFib detection
+        const MIN_BEATS_AFIB = 60;  // ~1 minute at 60bpm
+        const MIN_BEATS_BASIC = 30; // Minimum for any analysis
+
+        // Calculate Sample Entropy (SampEn) - more robust than Shannon for short data
+        // Lower values = more regular, Higher values = more random/chaotic
+        // Normal sinus: 0.5-1.5, AFib: typically >1.5-2.0
+        function calculateSampleEntropy(rrIntervals, m = 2, r = null) {
+            const N = rrIntervals.length;
+            if (N < 20) return null;
+
+            // r = tolerance, typically 0.2 * stdDev
+            if (r === null) {
+                const mean = rrIntervals.reduce((a, b) => a + b, 0) / N;
+                const stdDev = Math.sqrt(rrIntervals.reduce((sum, rr) => sum + Math.pow(rr - mean, 2), 0) / N);
+                r = 0.2 * stdDev;
+            }
+
+            // Count template matches for embedding dimensions m and m+1
+            function countMatches(data, templateLen) {
+                let count = 0;
+                for (let i = 0; i < N - templateLen; i++) {
+                    for (let j = i + 1; j < N - templateLen; j++) {
+                        // Check if templates match within tolerance r
+                        let match = true;
+                        for (let k = 0; k < templateLen; k++) {
+                            if (Math.abs(data[i + k] - data[j + k]) > r) {
+                                match = false;
+                                break;
+                            }
+                        }
+                        if (match) count++;
+                    }
+                }
+                return count;
+            }
+
+            const A = countMatches(rrIntervals, m + 1); // matches of length m+1
+            const B = countMatches(rrIntervals, m);     // matches of length m
+
+            if (B === 0 || A === 0) return null;
+
+            return -Math.log(A / B);
+        }
+
+        // Calculate Shannon Entropy of RR intervals (kept for comparison)
         // Higher entropy = more randomness (AFib has high entropy)
         function calculateShannonEntropy(rrIntervals) {
             if (rrIntervals.length < 10) return null;
@@ -2724,6 +2779,43 @@
             const stdDev = Math.sqrt(variance);
 
             return (stdDev / mean) * 100; // As percentage
+        }
+
+        // Calculate RMSSD and SDNN for ratio
+        // RMSSD = short-term variability, SDNN = overall variability
+        // RMSSD/SDNN ratio: Normal ~0.5-0.8, AFib often >1.0 (more beat-to-beat chaos)
+        function calculateRmssdSdnnRatio(rrIntervals) {
+            if (rrIntervals.length < 20) return null;
+
+            // SDNN = standard deviation of all RR intervals
+            const mean = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
+            const sdnn = Math.sqrt(rrIntervals.reduce((sum, rr) => sum + Math.pow(rr - mean, 2), 0) / rrIntervals.length);
+
+            // RMSSD = root mean square of successive differences
+            let sumSquaredDiff = 0;
+            for (let i = 1; i < rrIntervals.length; i++) {
+                const diff = rrIntervals[i] - rrIntervals[i - 1];
+                sumSquaredDiff += diff * diff;
+            }
+            const rmssd = Math.sqrt(sumSquaredDiff / (rrIntervals.length - 1));
+
+            if (sdnn === 0) return null;
+            return { rmssd, sdnn, ratio: rmssd / sdnn };
+        }
+
+        // Calculate Median Absolute Deviation (MAD) - more robust than CV to outliers
+        // Normalized MAD (MAD/median): Normal <10%, AFib often >15%
+        function calculateMAD(rrIntervals) {
+            if (rrIntervals.length < 10) return null;
+
+            const sorted = [...rrIntervals].sort((a, b) => a - b);
+            const median = sorted[Math.floor(sorted.length / 2)];
+
+            const deviations = rrIntervals.map(rr => Math.abs(rr - median));
+            const sortedDev = [...deviations].sort((a, b) => a - b);
+            const mad = sortedDev[Math.floor(sortedDev.length / 2)];
+
+            return { mad, median, normalized: (mad / median) * 100 };
         }
 
         // Calculate Poincaré plot SD1 and SD2
@@ -2802,6 +2894,29 @@
             };
         }
 
+        // Remove ectopic beats and their compensatory pauses from RR data
+        // This gives cleaner data for AFib analysis
+        function filterEctopicBeats(rrIntervals, ectopicIndices) {
+            if (ectopicIndices.length === 0) return rrIntervals;
+
+            const filtered = [];
+            const skipIndices = new Set();
+
+            // Mark ectopic beat and its compensatory pause for removal
+            for (const idx of ectopicIndices) {
+                skipIndices.add(idx);
+                skipIndices.add(idx + 1);
+            }
+
+            for (let i = 0; i < rrIntervals.length; i++) {
+                if (!skipIndices.has(i)) {
+                    filtered.push(rrIntervals[i]);
+                }
+            }
+
+            return filtered;
+        }
+
         // Calculate Heart Rate Turbulence (HRT) after ectopic beats
         // Requires ectopic beat indices and surrounding RR intervals
         // TO (Turbulence Onset): should be negative (acceleration after PVC)
@@ -2874,75 +2989,114 @@
             return (n * sumXY - sumX * sumY) / denom;
         }
 
-        // Combined AFib probability score
-        // Weighs multiple metrics to estimate AFib likelihood
-        function calculateAfibProbability(rrIntervals) {
-            if (rrIntervals.length < 30) return null;
+        // Combined AFib probability score using multiple validated metrics
+        // Returns { probability, confidence, metrics } for transparency
+        function calculateAfibProbability(rrIntervals, ectopicIndices = []) {
+            if (rrIntervals.length < MIN_BEATS_BASIC) return null;
 
-            const entropy = calculateShannonEntropy(rrIntervals);
-            const cv = calculateRRCoefficientOfVariation(rrIntervals);
-            const poincare = calculatePoincareMetrics(rrIntervals);
-            const tpr = calculateTurningPointRatio(rrIntervals);
+            // Filter out ectopic beats for cleaner AFib analysis
+            const cleanRR = filterEctopicBeats(rrIntervals, ectopicIndices);
+            if (cleanRR.length < MIN_BEATS_BASIC) return null;
 
-            if (entropy === null || cv === null) return null;
+            // Calculate all metrics
+            const sampleEnt = calculateSampleEntropy(cleanRR);
+            const shannonEnt = calculateShannonEntropy(cleanRR);
+            const cv = calculateRRCoefficientOfVariation(cleanRR);
+            const rmssdSdnn = calculateRmssdSdnnRatio(cleanRR);
+            const mad = calculateMAD(cleanRR);
+            const poincare = calculatePoincareMetrics(cleanRR);
+            const tpr = calculateTurningPointRatio(cleanRR);
 
             let score = 0;
             let weights = 0;
+            const metrics = {};
 
-            // Entropy score (normal: 2-3, AFib: >3.5)
-            if (entropy !== null) {
-                const entropyScore = Math.min(100, Math.max(0, (entropy - 2.5) / 1.5 * 100));
-                score += entropyScore * 0.30;
-                weights += 0.30;
-            }
-
-            // CV score (normal: 5-10%, AFib: >15%)
-            if (cv !== null) {
-                const cvScore = Math.min(100, Math.max(0, (cv - 8) / 10 * 100));
-                score += cvScore * 0.30;
-                weights += 0.30;
-            }
-
-            // Poincaré ratio score (normal: 0.4-0.7, AFib: >0.8)
-            if (poincare && poincare.ratio !== null) {
-                const ratioScore = Math.min(100, Math.max(0, (poincare.ratio - 0.5) / 0.5 * 100));
-                score += ratioScore * 0.25;
+            // 1. Sample Entropy (most robust for short noisy data) - weight 25%
+            // Normal: 0.5-1.2, AFib: >1.5
+            if (sampleEnt !== null) {
+                metrics.sampleEntropy = sampleEnt;
+                const sampEntScore = Math.min(100, Math.max(0, (sampleEnt - 1.0) / 1.0 * 100));
+                score += sampEntScore * 0.25;
                 weights += 0.25;
+            } else if (shannonEnt !== null) {
+                // Fallback to Shannon if Sample Entropy fails
+                metrics.shannonEntropy = shannonEnt;
+                const entropyScore = Math.min(100, Math.max(0, (shannonEnt - 2.5) / 1.5 * 100));
+                score += entropyScore * 0.20;
+                weights += 0.20;
             }
 
-            // Turning point ratio score (normal: 0.5-0.65, AFib: >0.7)
-            if (tpr !== null) {
-                const tprScore = Math.min(100, Math.max(0, (tpr - 0.55) / 0.2 * 100));
-                score += tprScore * 0.15;
+            // 2. RMSSD/SDNN ratio - weight 20%
+            // Normal: 0.5-0.8, AFib: >1.0
+            if (rmssdSdnn && rmssdSdnn.ratio !== null) {
+                metrics.rmssdSdnnRatio = rmssdSdnn.ratio;
+                const ratioScore = Math.min(100, Math.max(0, (rmssdSdnn.ratio - 0.6) / 0.6 * 100));
+                score += ratioScore * 0.20;
+                weights += 0.20;
+            }
+
+            // 3. Coefficient of Variation - weight 15%
+            // Normal: 5-10%, AFib: >15%
+            if (cv !== null) {
+                metrics.cv = cv;
+                const cvScore = Math.min(100, Math.max(0, (cv - 8) / 12 * 100));
+                score += cvScore * 0.15;
                 weights += 0.15;
             }
 
-            // Normalize by weights used
-            const probability = weights > 0 ? Math.round(score / weights) : 0;
+            // 4. Normalized MAD (robust to outliers) - weight 15%
+            // Normal: <10%, AFib: >15%
+            if (mad && mad.normalized !== null) {
+                metrics.madNormalized = mad.normalized;
+                const madScore = Math.min(100, Math.max(0, (mad.normalized - 8) / 12 * 100));
+                score += madScore * 0.15;
+                weights += 0.15;
+            }
 
-            return Math.max(0, Math.min(100, probability));
+            // 5. Poincaré SD1/SD2 ratio - weight 15%
+            // Normal: 0.4-0.7, AFib: >0.85 (more circular)
+            if (poincare && poincare.ratio !== null) {
+                metrics.poincareRatio = poincare.ratio;
+                const poincareScore = Math.min(100, Math.max(0, (poincare.ratio - 0.5) / 0.5 * 100));
+                score += poincareScore * 0.15;
+                weights += 0.15;
+            }
+
+            // 6. Turning Point Ratio - weight 10%
+            // Normal: 0.5-0.65, AFib: >0.72
+            if (tpr !== null) {
+                metrics.turningPointRatio = tpr;
+                const tprScore = Math.min(100, Math.max(0, (tpr - 0.58) / 0.20 * 100));
+                score += tprScore * 0.10;
+                weights += 0.10;
+            }
+
+            if (weights === 0) return null;
+
+            // Normalize probability
+            const probability = Math.round(Math.max(0, Math.min(100, score / weights)));
+
+            // Calculate confidence based on data quantity and metric availability
+            let confidence = 'low';
+            if (cleanRR.length >= MIN_BEATS_AFIB && weights >= 0.8) {
+                confidence = 'high';
+            } else if (cleanRR.length >= MIN_BEATS_BASIC && weights >= 0.5) {
+                confidence = 'medium';
+            }
+
+            return { probability, confidence, metrics, beatsAnalyzed: cleanRR.length };
         }
 
         // Main rhythm analysis function
         function analyzeHeartRhythm(rrIntervals) {
-            if (rrIntervals.length < 30) {
-                debug('Rhythm analysis: insufficient data (' + rrIntervals.length + ' intervals, need 30+)');
+            if (rrIntervals.length < MIN_BEATS_BASIC) {
+                debug(`Rhythm analysis: insufficient data (${rrIntervals.length} intervals, need ${MIN_BEATS_BASIC}+)`);
                 return;
             }
 
             debug('Analyzing heart rhythm from ' + rrIntervals.length + ' RR intervals...');
 
-            // Calculate all metrics
-            rhythmAnalysis.hrvEntropy = calculateShannonEntropy(rrIntervals);
-            rhythmAnalysis.rrCoeffVar = calculateRRCoefficientOfVariation(rrIntervals);
-            rhythmAnalysis.turningPointRatio = calculateTurningPointRatio(rrIntervals);
-
-            const poincare = calculatePoincareMetrics(rrIntervals);
-            if (poincare) {
-                rhythmAnalysis.poincareRatio = poincare.ratio;
-            }
-
-            // Detect ectopic beats
+            // Detect ectopic beats first (needed for filtering)
             const ectopics = detectEctopicBeats(rrIntervals);
             rhythmAnalysis.ectopicCount = ectopics.count;
             rhythmAnalysis.ectopicBurden = ectopics.burden;
@@ -2954,26 +3108,68 @@
                 rhythmAnalysis.hrtTurbulenceSlope = hrt.TS;
             }
 
-            // Calculate AFib probability
-            rhythmAnalysis.afibProbability = calculateAfibProbability(rrIntervals);
-            rhythmAnalysis.totalBeatsAnalyzed = rrIntervals.length;
+            // Calculate basic metrics on raw data (for display)
+            rhythmAnalysis.hrvEntropy = calculateShannonEntropy(rrIntervals);
+            rhythmAnalysis.rrCoeffVar = calculateRRCoefficientOfVariation(rrIntervals);
+            rhythmAnalysis.turningPointRatio = calculateTurningPointRatio(rrIntervals);
+
+            const poincare = calculatePoincareMetrics(rrIntervals);
+            if (poincare) {
+                rhythmAnalysis.poincareRatio = poincare.ratio;
+            }
+
+            // Calculate AFib probability (uses ectopic-filtered data internally)
+            const afibResult = calculateAfibProbability(rrIntervals, ectopics.indices);
+
+            if (afibResult) {
+                rhythmAnalysis.afibProbability = afibResult.probability;
+                rhythmAnalysis.afibConfidence = afibResult.confidence;
+                rhythmAnalysis.afibMetrics = afibResult.metrics;
+                rhythmAnalysis.totalBeatsAnalyzed = afibResult.beatsAnalyzed;
+            } else {
+                rhythmAnalysis.afibProbability = null;
+                rhythmAnalysis.afibConfidence = null;
+            }
+
             rhythmAnalysis.lastAnalysis = Date.now();
 
-            // Determine status
+            // Determine status based on probability and confidence
             if (rhythmAnalysis.afibProbability !== null) {
-                if (rhythmAnalysis.afibProbability >= 70) {
-                    rhythmAnalysis.afibStatus = 'afib_warning';
-                } else if (rhythmAnalysis.afibProbability >= 40 || rhythmAnalysis.ectopicBurden > 5) {
-                    rhythmAnalysis.afibStatus = 'irregular';
+                const prob = rhythmAnalysis.afibProbability;
+                const conf = rhythmAnalysis.afibConfidence;
+
+                // High confidence thresholds
+                if (conf === 'high') {
+                    if (prob >= 65) {
+                        rhythmAnalysis.afibStatus = 'afib_warning';
+                    } else if (prob >= 35 || rhythmAnalysis.ectopicBurden > 5) {
+                        rhythmAnalysis.afibStatus = 'irregular';
+                    } else {
+                        rhythmAnalysis.afibStatus = 'normal';
+                    }
                 } else {
-                    rhythmAnalysis.afibStatus = 'normal';
+                    // Lower confidence = higher thresholds to avoid false positives
+                    if (prob >= 75) {
+                        rhythmAnalysis.afibStatus = 'afib_warning';
+                    } else if (prob >= 50 || rhythmAnalysis.ectopicBurden > 5) {
+                        rhythmAnalysis.afibStatus = 'irregular';
+                    } else {
+                        rhythmAnalysis.afibStatus = 'normal';
+                    }
                 }
             }
 
+            // Detailed debug output
             debug(`Rhythm: entropy=${rhythmAnalysis.hrvEntropy?.toFixed(2)}, CV=${rhythmAnalysis.rrCoeffVar?.toFixed(1)}%, ` +
                   `Poincaré=${rhythmAnalysis.poincareRatio?.toFixed(2)}, TPR=${rhythmAnalysis.turningPointRatio?.toFixed(2)}`);
             debug(`Ectopics: ${rhythmAnalysis.ectopicCount} (${rhythmAnalysis.ectopicBurden}% burden)`);
-            debug(`AFib probability: ${rhythmAnalysis.afibProbability}% - Status: ${rhythmAnalysis.afibStatus}`);
+
+            if (rhythmAnalysis.afibMetrics) {
+                const m = rhythmAnalysis.afibMetrics;
+                debug(`AFib metrics: SampEnt=${m.sampleEntropy?.toFixed(2) || 'N/A'}, RMSSD/SDNN=${m.rmssdSdnnRatio?.toFixed(2) || 'N/A'}, ` +
+                      `MAD=${m.madNormalized?.toFixed(1) || 'N/A'}%`);
+            }
+            debug(`AFib: ${rhythmAnalysis.afibProbability}% (${rhythmAnalysis.afibConfidence} conf) - ${rhythmAnalysis.afibStatus}`);
 
             // Update UI
             updateRhythmUI();
@@ -3006,27 +3202,32 @@
 
             // Update main display based on status
             statusEl.classList.remove('warning');
+            const confLabel = rhythmAnalysis.afibConfidence ? ` (${rhythmAnalysis.afibConfidence} conf)` : '';
+
             if (rhythmAnalysis.afibStatus === 'normal') {
                 valueEl.textContent = 'NSR';
-                statusEl.textContent = 'normal sinus rhythm';
+                statusEl.textContent = 'Normal Sinus Rhythm';
             } else if (rhythmAnalysis.afibStatus === 'irregular') {
                 valueEl.textContent = 'IRR';
-                statusEl.textContent = 'irregular - monitor';
+                statusEl.textContent = 'Irregular - monitor';
                 statusEl.classList.add('warning');
             } else if (rhythmAnalysis.afibStatus === 'afib_warning') {
                 valueEl.textContent = 'AFib?';
-                statusEl.textContent = 'possible AFib - see doctor';
+                statusEl.textContent = 'Possible AFib - see doctor';
                 statusEl.classList.add('warning');
             }
 
-            // Update detail line
+            // Update detail line with more info
             if (detailEl) {
                 let details = [];
+                if (rhythmAnalysis.afibProbability !== null) {
+                    details.push(`${rhythmAnalysis.afibProbability}%`);
+                    if (rhythmAnalysis.afibConfidence) {
+                        details[0] += ` (${rhythmAnalysis.afibConfidence})`;
+                    }
+                }
                 if (rhythmAnalysis.ectopicCount > 0) {
                     details.push(`${rhythmAnalysis.ectopicCount} ectopic${rhythmAnalysis.ectopicCount > 1 ? 's' : ''}`);
-                }
-                if (rhythmAnalysis.afibProbability !== null) {
-                    details.push(`${rhythmAnalysis.afibProbability}% AFib prob`);
                 }
                 if (rhythmAnalysis.totalBeatsAnalyzed > 0) {
                     details.push(`${rhythmAnalysis.totalBeatsAnalyzed} beats`);
