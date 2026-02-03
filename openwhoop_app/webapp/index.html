@@ -2458,16 +2458,37 @@
             return Math.sqrt(sumSquaredDiff / count);
         }
 
-        // Clean RR intervals like Rust: average RR intervals within each reading
+        // Clean RR intervals: average RR intervals within each reading
         // This converts multiple RR intervals per reading into one averaged value
-        // Note: Rust doesn't filter by range - it trusts the device data
+        // Filters out physiologically impossible values (outside 300-1500ms range)
         function cleanRR(readings) {
             const cleaned = [];
             for (const reading of readings) {
                 if (!reading.rr || reading.rr.length === 0) continue;
-                // Average the RR intervals for this reading (like Rust's clean_rr)
-                // No filtering - Rust trusts the device data
-                const avg = reading.rr.reduce((a, b) => a + b, 0) / reading.rr.length;
+
+                // Filter to valid physiological range (40-200 bpm = 300-1500ms)
+                // This removes artifacts like half-beats or missed beats
+                const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
+                if (validRR.length === 0) continue;
+
+                // Additionally validate against reported BPM if available
+                // RR should be within ~25% of expected value from BPM
+                if (reading.bpm && reading.bpm > 0) {
+                    const expectedRR = 60000 / reading.bpm;
+                    const tolerance = expectedRR * 0.25; // 25% tolerance
+                    const bpmValidRR = validRR.filter(rr =>
+                        Math.abs(rr - expectedRR) <= tolerance
+                    );
+                    // Only use BPM-validated values if we have any
+                    if (bpmValidRR.length > 0) {
+                        const avg = bpmValidRR.reduce((a, b) => a + b, 0) / bpmValidRR.length;
+                        cleaned.push(avg);
+                        continue;
+                    }
+                }
+
+                // Fall back to physiologically valid RR if BPM validation fails
+                const avg = validRR.reduce((a, b) => a + b, 0) / validRR.length;
                 cleaned.push(avg);
             }
             return cleaned;
