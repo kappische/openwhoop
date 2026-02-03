@@ -3312,18 +3312,33 @@
                 debug(`RHR calculated from ${metricsSource}: ${sleepMetrics.rhr} bpm`);
             }
 
-            // Calculate HRV (like Rust: rolling HRV with 300-windows, average all values)
-            // Note: cleanRR averages RR intervals within each reading (like Rust's clean_rr)
-            if (cleanedRR.length >= 10) {
-                // Use rolling HRV if we have enough data (300 readings), otherwise simple RMSSD
-                if (cleanedRR.length >= 300) {
-                    sleepMetrics.hrv = Math.round(calculateRollingHRV(cleanedRR));
-                    debug(`HRV (rolling RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${cleanedRR.length} readings)`);
+            // Calculate HRV using RAW beat-to-beat RR intervals (not averaged per-reading)
+            // This gives true beat-to-beat variability like Whoop's official calculation
+            const rawRRforHRV = getRawRR(readingsForHRV);
+            if (rawRRforHRV.length >= 30) {
+                // Use 5-minute windows (at ~60bpm = 300 beats) for rolling HRV if enough data
+                const WINDOW_SIZE = 300;
+                if (rawRRforHRV.length >= WINDOW_SIZE * 2) {
+                    // Rolling RMSSD across windows, then average
+                    const hrvValues = [];
+                    for (let i = 0; i <= rawRRforHRV.length - WINDOW_SIZE; i += Math.floor(WINDOW_SIZE / 2)) {
+                        const window = rawRRforHRV.slice(i, i + WINDOW_SIZE);
+                        const rmssd = calculateRMSSD(window);
+                        if (rmssd !== null && rmssd > 0) hrvValues.push(rmssd);
+                    }
+                    if (hrvValues.length > 0) {
+                        sleepMetrics.hrv = Math.round(hrvValues.reduce((a, b) => a + b, 0) / hrvValues.length);
+                        debug(`HRV (rolling RMSSD, raw RR) from ${metricsSource}: ${sleepMetrics.hrv} ms (${rawRRforHRV.length} raw intervals, ${hrvValues.length} windows)`);
+                    }
                 } else {
-                    // Not enough for rolling - use simple RMSSD
-                    sleepMetrics.hrv = Math.round(calculateRMSSD(cleanedRR));
-                    debug(`HRV (RMSSD) from ${metricsSource}: ${sleepMetrics.hrv} ms (${cleanedRR.length} readings, need 300 for rolling)`);
+                    // Not enough for rolling - use simple RMSSD on all raw intervals
+                    sleepMetrics.hrv = Math.round(calculateRMSSD(rawRRforHRV));
+                    debug(`HRV (RMSSD, raw RR) from ${metricsSource}: ${sleepMetrics.hrv} ms (${rawRRforHRV.length} raw intervals)`);
                 }
+            } else if (cleanedRR.length >= 10) {
+                // Fallback: not enough raw RR, use averaged (less accurate)
+                sleepMetrics.hrv = Math.round(calculateRMSSD(cleanedRR));
+                debug(`HRV (RMSSD, averaged) from ${metricsSource}: ${sleepMetrics.hrv} ms (${cleanedRR.length} readings, insufficient raw RR)`);
             }
 
             // Calculate stress score (from Rust algorithm)
