@@ -117,6 +117,14 @@
         .connect-btn:disabled {
             opacity: 0.5;
         }
+        .connect-btn-secondary {
+            background: transparent;
+            color: var(--text-secondary);
+            border: 1px solid var(--text-secondary);
+            margin-top: 10px;
+            font-size: 12px;
+            padding: 10px 30px;
+        }
         .auto-connect-status {
             color: var(--text-secondary);
             font-size: 12px;
@@ -1275,7 +1283,8 @@
         <div class="connect-logo">WHOOP</div>
         <div class="connect-subtitle">Open Source Heart Monitor</div>
         <div class="auto-connect-status" id="auto-connect-status"></div>
-        <button class="connect-btn" id="connect-btn" onclick="connect()">Connect</button>
+        <button class="connect-btn" id="reconnect-btn" onclick="quickReconnect()" style="display: none;">Reconnect</button>
+        <button class="connect-btn connect-btn-secondary" id="connect-btn" onclick="connect()">Connect</button>
         <div class="forget-device" id="forget-device" onclick="forgetDevice()" style="display: none;">Forget Device</div>
     </div>
 
@@ -4228,10 +4237,15 @@
                 document.getElementById('main-app').classList.add('active');
                 document.getElementById('debug-console').classList.add('visible');
 
-                // Save device ID for auto-connect on next app launch
-                if (device && device.id) {
-                    localStorage.setItem('whoop_device_id', device.id);
-                    debug(`Saved device ID for auto-connect: ${device.id}`);
+                // Save device ID and name for auto-connect on next app launch
+                if (device) {
+                    if (device.id) {
+                        localStorage.setItem('whoop_device_id', device.id);
+                    }
+                    if (device.name) {
+                        localStorage.setItem('whoop_device_name', device.name);
+                    }
+                    debug(`Saved device for auto-connect: ${device.name || 'Unknown'} (${device.id || 'no-id'})`);
                 }
 
                 // Initialize wrist status as on-wrist (we just connected)
@@ -4307,20 +4321,32 @@
 
         // Auto-connect to last known device on app launch
         async function autoConnect() {
-            // Check if Web Bluetooth getDevices is supported
-            if (!navigator.bluetooth || !navigator.bluetooth.getDevices) {
-                debug('Auto-connect not supported (getDevices API unavailable)');
-                return false;
-            }
-
             const savedDeviceId = localStorage.getItem('whoop_device_id');
-            if (!savedDeviceId) {
-                debug('No saved device ID for auto-connect');
+            const savedDeviceName = localStorage.getItem('whoop_device_name');
+
+            // No saved device - nothing to auto-connect to
+            if (!savedDeviceId && !savedDeviceName) {
+                debug('No saved device for auto-connect');
                 return false;
             }
 
             // Show forget device option since we have a saved device
             document.getElementById('forget-device').style.display = 'block';
+
+            // Check if Web Bluetooth getDevices is supported (Chrome, Edge - not Bluefy/iOS)
+            if (!navigator.bluetooth || !navigator.bluetooth.getDevices) {
+                // Fallback for Bluefy/iOS: Show quick reconnect button with saved device name
+                debug('getDevices API not available - showing quick reconnect for: ' + savedDeviceName);
+                if (savedDeviceName) {
+                    document.getElementById('auto-connect-status').textContent = `Last device: ${savedDeviceName}`;
+                    document.getElementById('reconnect-btn').textContent = `Reconnect to ${savedDeviceName}`;
+                    document.getElementById('reconnect-btn').style.display = 'block';
+                    // Make the regular connect button secondary
+                    document.getElementById('connect-btn').classList.add('connect-btn-secondary');
+                    document.getElementById('connect-btn').textContent = 'Connect New Device';
+                }
+                return false;
+            }
 
             debug(`Attempting auto-connect to saved device: ${savedDeviceId}`);
             document.getElementById('auto-connect-status').textContent = 'Connecting to saved device...';
@@ -4495,12 +4521,175 @@
             }
         }
 
-        // Clear saved device ID so user can pair a different device
+        // Clear saved device so user can pair a different device
         function forgetDevice() {
             localStorage.removeItem('whoop_device_id');
+            localStorage.removeItem('whoop_device_name');
             document.getElementById('forget-device').style.display = 'none';
+            document.getElementById('reconnect-btn').style.display = 'none';
             document.getElementById('auto-connect-status').textContent = '';
+            document.getElementById('connect-btn').classList.remove('connect-btn-secondary');
+            document.getElementById('connect-btn').textContent = 'Connect';
             debug('Forgot saved device - will need to pair again');
+        }
+
+        // Quick reconnect using saved device name (for Bluefy/iOS where getDevices isn't available)
+        // This opens the device picker but pre-filtered to the saved device name
+        async function quickReconnect() {
+            const savedDeviceName = localStorage.getItem('whoop_device_name');
+            if (!savedDeviceName) {
+                debug('No saved device name for quick reconnect');
+                connect(); // Fall back to regular connect
+                return;
+            }
+
+            try {
+                document.getElementById('reconnect-btn').disabled = true;
+                document.getElementById('reconnect-btn').textContent = 'Connecting...';
+                debug(`Quick reconnect to: ${savedDeviceName}`);
+
+                // Request device with name filter - picker will show only matching devices
+                device = await navigator.bluetooth.requestDevice({
+                    filters: [{ services: [WHOOP_SERVICE], name: savedDeviceName }]
+                });
+                debug(`Device selected: ${device.name}`);
+
+                // Continue with normal connection flow
+                const server = await device.gatt.connect();
+                debug('GATT connected');
+                const service = await server.getPrimaryService(WHOOP_SERVICE);
+                debug('Got primary service');
+
+                cmdChar = await service.getCharacteristic(CMD_TO_STRAP);
+                debug('Got CMD_TO_STRAP characteristic');
+
+                const dataChar = await service.getCharacteristic(DATA_FROM_STRAP);
+                await dataChar.startNotifications();
+                dataChar.addEventListener('characteristicvaluechanged', handleNotification);
+                debug('DATA_FROM_STRAP notifications started');
+
+                try {
+                    const cmdFromChar = await service.getCharacteristic(CMD_FROM_STRAP);
+                    await cmdFromChar.startNotifications();
+                    cmdFromChar.addEventListener('characteristicvaluechanged', handleNotification);
+                    debug('CMD_FROM_STRAP notifications started');
+                } catch (e) {
+                    debug('CMD_FROM_STRAP not available: ' + e.message);
+                }
+
+                try {
+                    const eventsChar = await service.getCharacteristic(EVENTS_FROM_STRAP);
+                    await eventsChar.startNotifications();
+                    eventsChar.addEventListener('characteristicvaluechanged', handleNotification);
+                    debug('EVENTS_FROM_STRAP notifications started');
+                } catch (e) {
+                    debug('EVENTS_FROM_STRAP not available: ' + e.message);
+                }
+
+                // Initialize connection
+                debug('Sending helloHarvard...');
+                await cmdChar.writeValueWithoutResponse(helloHarvard());
+                await sleep(100);
+                debug('Sending setClock...');
+                await cmdChar.writeValueWithoutResponse(setClock());
+                await sleep(100);
+
+                debug('Requesting historical data...');
+                const histPacket = createPacket(35, 0, 22, [0x00]);
+                await cmdChar.writeValueWithoutResponse(histPacket);
+                await sleep(2000);
+
+                debug('Sending enterHighFreqSync...');
+                await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
+                await sleep(100);
+
+                debug('Enabling realtime HR...');
+                await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
+                await sleep(100);
+                debug('Enabling raw data mode...');
+                await cmdChar.writeValueWithoutResponse(startRawData());
+                sensorData.rawDataEnabled = true;
+                await sleep(100);
+
+                debug('Sending getAlarmTime...');
+                await cmdChar.writeValueWithoutResponse(getAlarmTime());
+                await sleep(100);
+
+                if (globalAlarmEnabled && schedules && schedules.length > 0) {
+                    const nextAlarm = getNextScheduledAlarmFromSchedules();
+                    if (nextAlarm) {
+                        debug('Syncing scheduled alarm to device...');
+                        await doSetAlarm(nextAlarm, true);
+                    }
+                }
+                await sleep(100);
+
+                debug('Requesting battery level...');
+                await cmdChar.writeValueWithoutResponse(getBatteryLevel());
+                await sleep(100);
+
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.REPORT_VERSION_INFO, [0x00]));
+                await sleep(100);
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.GET_ADVERTISING_NAME, [0x00]));
+                await sleep(100);
+                await cmdChar.writeValueWithoutResponse(createPacket(35, 0, CMD.GET_BODY_LOCATION, [0x00]));
+                await sleep(100);
+
+                // Process historical data after delay
+                setTimeout(() => {
+                    if (historicalData.length > 0) {
+                        debug(`Processing ${historicalData.length} historical readings...`);
+                        processSleepData();
+                    }
+                }, 15000);
+
+                // Update UI for connected state
+                document.getElementById('status-dot').classList.add('connected');
+                document.getElementById('status-text').textContent = '';
+                document.getElementById('connect-screen').classList.add('hidden');
+                document.getElementById('main-app').classList.add('active');
+                document.getElementById('debug-console').classList.add('visible');
+
+                // Save device info for next time
+                if (device) {
+                    if (device.id) localStorage.setItem('whoop_device_id', device.id);
+                    if (device.name) localStorage.setItem('whoop_device_name', device.name);
+                }
+
+                deviceStatus.onWrist = true;
+                updateWristUI();
+
+                // Set up periodic battery refresh
+                batteryIntervalId = setInterval(async () => {
+                    if (cmdChar && !isInBackground) {
+                        try {
+                            await cmdChar.writeValueWithoutResponse(getBatteryLevel());
+                        } catch (e) {
+                            debug('Battery refresh failed: ' + e.message);
+                        }
+                    }
+                }, 120 * 1000);
+
+                // Set up periodic alarm refresh
+                alarmIntervalId = setInterval(async () => {
+                    if (cmdChar && !isInBackground && globalAlarmEnabled && schedules.length > 0) {
+                        await refreshAlarmIfNeeded();
+                    }
+                }, 60 * 1000);
+
+                device.addEventListener('gattserverdisconnected', onDisconnect);
+                debug('Quick reconnect successful!');
+
+            } catch (e) {
+                debug('Quick reconnect error: ' + e.message);
+                document.getElementById('reconnect-btn').disabled = false;
+                document.getElementById('reconnect-btn').textContent = `Reconnect to ${savedDeviceName}`;
+
+                // If it was a filter error, try regular connect
+                if (e.message.includes('filter')) {
+                    debug('Filter error - device may have different name now. Try Connect New Device.');
+                }
+            }
         }
 
         function onDisconnect() {
