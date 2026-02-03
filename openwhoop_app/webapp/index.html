@@ -1267,6 +1267,7 @@
             <div>
                 <button onclick="copyLog()" class="debug-btn">Copy</button>
                 <button onclick="downloadLog()" class="debug-btn">Share</button>
+                <button onclick="exportRawData()" class="debug-btn" style="color:#00d1a7;">Export Data</button>
                 <button onclick="clearLog()" class="debug-btn">Clear</button>
                 <button onclick="clearStorage()" class="debug-btn" style="color:#ff6b6b;">Reset</button>
             </div>
@@ -2045,6 +2046,87 @@
                 debug('Storage cleared - refresh page to start fresh');
                 alert('Storage cleared. Please refresh the page.');
             }
+        }
+
+        // Export raw data for algorithm testing/debugging
+        function exportRawData() {
+            const exportData = {
+                exportTime: new Date().toISOString(),
+                historicalReadings: historicalData.length,
+                currentMetrics: { ...sleepMetrics },
+                // Extract raw data arrays for algorithm testing
+                rawData: {
+                    bpms: [],
+                    rrIntervals: [],
+                    timestamps: []
+                }
+            };
+
+            // Collect BPMs, RR intervals, and timestamps from historical data
+            historicalData.forEach(reading => {
+                exportData.rawData.bpms.push(reading.bpm);
+                exportData.rawData.timestamps.push(reading.time.toISOString());
+                if (reading.rr && reading.rr.length > 0) {
+                    exportData.rawData.rrIntervals.push(...reading.rr);
+                }
+            });
+
+            // Add summary stats
+            exportData.summary = {
+                totalBPMs: exportData.rawData.bpms.length,
+                totalRRIntervals: exportData.rawData.rrIntervals.length,
+                bpmRange: exportData.rawData.bpms.length > 0 ? {
+                    min: Math.min(...exportData.rawData.bpms),
+                    max: Math.max(...exportData.rawData.bpms),
+                    avg: Math.round(exportData.rawData.bpms.reduce((a, b) => a + b, 0) / exportData.rawData.bpms.length)
+                } : null,
+                rrRange: exportData.rawData.rrIntervals.length > 0 ? {
+                    min: Math.min(...exportData.rawData.rrIntervals),
+                    max: Math.max(...exportData.rawData.rrIntervals),
+                    avg: Math.round(exportData.rawData.rrIntervals.reduce((a, b) => a + b, 0) / exportData.rawData.rrIntervals.length)
+                } : null
+            };
+
+            // Output to console in a format that can be copy/pasted
+            console.log('=== WHOOP RAW DATA EXPORT ===');
+            console.log('Summary:', exportData.summary);
+            console.log('Current Metrics:', exportData.currentMetrics);
+            console.log('---');
+            console.log('BPM Array (for RHR testing):');
+            console.log(JSON.stringify(exportData.rawData.bpms));
+            console.log('---');
+            console.log('RR Interval Array (for HRV/RespRate testing):');
+            console.log(JSON.stringify(exportData.rawData.rrIntervals));
+            console.log('---');
+            console.log('Full Export (JSON):');
+            console.log(JSON.stringify(exportData, null, 2));
+
+            // Also put compact version in debug log
+            debug(`=== Data Export ===`);
+            debug(`Readings: ${exportData.historicalReadings}, BPMs: ${exportData.summary.totalBPMs}, RR intervals: ${exportData.summary.totalRRIntervals}`);
+            if (exportData.summary.bpmRange) {
+                debug(`BPM range: ${exportData.summary.bpmRange.min}-${exportData.summary.bpmRange.max} (avg ${exportData.summary.bpmRange.avg})`);
+            }
+            if (exportData.summary.rrRange) {
+                debug(`RR range: ${exportData.summary.rrRange.min}-${exportData.summary.rrRange.max}ms (avg ${exportData.summary.rrRange.avg}ms)`);
+            }
+            debug(`Current metrics: RHR=${sleepMetrics.rhr}, HRV=${sleepMetrics.hrv}, RespRate=${sleepMetrics.respRate?.toFixed(1)}`);
+            debug(`Open browser console (F12) to see full raw arrays for copy/paste`);
+
+            // Copy summary to clipboard
+            const clipboardText = `WHOOP Data Export (${new Date().toLocaleString()})
+Readings: ${exportData.historicalReadings}
+BPMs: ${exportData.summary.totalBPMs}
+RR Intervals: ${exportData.summary.totalRRIntervals}
+Current Metrics: RHR=${sleepMetrics.rhr} HRV=${sleepMetrics.hrv} RespRate=${sleepMetrics.respRate?.toFixed(1)}
+
+See browser console (F12) for full raw data arrays.`;
+
+            navigator.clipboard.writeText(clipboardText).then(() => {
+                alert('Data exported to console (F12)!\n\nSummary copied to clipboard.');
+            }).catch(() => {
+                alert('Data exported to console (F12)!');
+            });
         }
 
         // Restart HR stream after SpO2 testing breaks it
