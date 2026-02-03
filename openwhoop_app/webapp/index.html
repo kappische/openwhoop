@@ -3377,11 +3377,13 @@
 
         // Calculate respiratory rate from RR intervals using autocorrelation
         // Respiratory Sinus Arrhythmia (RSA): breathing modulates HR at 0.15-0.4 Hz (9-24 rpm)
+        // During sleep, typical range is 12-16 rpm
         function calculateRespiratoryRate(rrIntervals) {
             if (rrIntervals.length < 60) return null;
 
-            // Step 1: Smooth RR intervals with moving average to reduce beat-to-beat noise
-            const windowSize = 5;
+            // Step 1: Heavy smoothing to extract respiratory oscillation
+            // Use larger window (9 samples) to remove beat-to-beat noise
+            const windowSize = 9;
             const smoothed = [];
             for (let i = 0; i < rrIntervals.length - windowSize + 1; i++) {
                 const window = rrIntervals.slice(i, i + windowSize);
@@ -3390,68 +3392,124 @@
 
             if (smoothed.length < 30) return null;
 
-            // Step 2: Detrend by subtracting the mean
+            // Calculate average RR for later conversion
+            const avgRR = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
+
+            // Step 2: Find peaks and troughs in smoothed signal
+            const peaks = [];
+            const troughs = [];
+
+            for (let i = 2; i < smoothed.length - 2; i++) {
+                // Peak detection with 2-sample look-ahead/behind
+                if (smoothed[i] > smoothed[i-1] && smoothed[i] > smoothed[i-2] &&
+                    smoothed[i] > smoothed[i+1] && smoothed[i] > smoothed[i+2]) {
+                    peaks.push(i);
+                }
+                // Trough detection
+                if (smoothed[i] < smoothed[i-1] && smoothed[i] < smoothed[i-2] &&
+                    smoothed[i] < smoothed[i+1] && smoothed[i] < smoothed[i+2]) {
+                    troughs.push(i);
+                }
+            }
+
+            // Need at least 3 peaks to calculate period reliably
+            if (peaks.length < 3) {
+                return calculateRespiratoryRateAutocorr(smoothed, avgRR);
+            }
+
+            // Step 3: Calculate periods between consecutive peaks
+            const periods = [];
+            for (let i = 1; i < peaks.length; i++) {
+                const periodBeats = peaks[i] - peaks[i-1];
+                // Filter out unreasonable periods (expect 3-8 beats per breath at 60bpm)
+                // This corresponds to 7.5-20 rpm
+                if (periodBeats >= 3 && periodBeats <= 10) {
+                    periods.push(periodBeats);
+                }
+            }
+
+            if (periods.length < 2) {
+                return calculateRespiratoryRateAutocorr(smoothed, avgRR);
+            }
+
+            // Step 4: Use median period (robust to outliers)
+            periods.sort((a, b) => a - b);
+            const medianPeriod = periods[Math.floor(periods.length / 2)];
+
+            // Convert to respiratory rate
+            // Period is in beats, need to convert to time using avgRR
+            const periodMs = medianPeriod * avgRR;
+            const breathsPerMinute = 60000 / periodMs;
+
+            return Math.max(8, Math.min(25, Math.round(breathsPerMinute * 10) / 10));
+        }
+
+        // Fallback: autocorrelation method
+        function calculateRespiratoryRateAutocorr(smoothed, avgRR) {
+            if (smoothed.length < 30) return null;
+
+            // Detrend
             const mean = smoothed.reduce((a, b) => a + b, 0) / smoothed.length;
             const detrended = smoothed.map(v => v - mean);
 
-            // Step 3: Calculate autocorrelation to find dominant period
-            // Look for peaks in lag range corresponding to 8-25 breaths/min
-            // At ~60 bpm (1 beat/sec), 12 rpm = 5 beats/breath, 20 rpm = 3 beats/breath
-            const minLag = 3;   // ~20 rpm at 60bpm
-            const maxLag = Math.min(15, Math.floor(detrended.length / 4)); // ~4 rpm limit
+            // Target lag range: 12-18 rpm during sleep
+            // At 60 bpm: 12 rpm = 5 beats, 18 rpm = 3.3 beats
+            // Use 3-8 beat lag range
+            const minLag = 3;
+            const maxLag = Math.min(10, Math.floor(detrended.length / 4));
 
-            let bestLag = 0;
-            let bestCorr = -1;
-
-            for (let lag = minLag; lag <= maxLag; lag++) {
+            // Find first significant peak in autocorrelation (not maximum)
+            // This is more robust than finding the global maximum
+            const autocorr = [];
+            for (let lag = 0; lag <= maxLag; lag++) {
                 let sum = 0;
-                let count = 0;
                 for (let i = 0; i < detrended.length - lag; i++) {
                     sum += detrended[i] * detrended[i + lag];
-                    count++;
                 }
-                const corr = count > 0 ? sum / count : 0;
-                if (corr > bestCorr) {
-                    bestCorr = corr;
+                autocorr.push(sum / (detrended.length - lag));
+            }
+
+            // Normalize by lag-0 autocorrelation
+            const norm = autocorr[0];
+            if (norm <= 0) return null;
+
+            for (let i = 0; i < autocorr.length; i++) {
+                autocorr[i] /= norm;
+            }
+
+            // Find first peak after minLag that exceeds threshold
+            const threshold = 0.3; // Require at least 30% correlation
+            let bestLag = 0;
+
+            for (let lag = minLag; lag <= maxLag - 1; lag++) {
+                // Check if this is a local maximum above threshold
+                if (autocorr[lag] > threshold &&
+                    autocorr[lag] > autocorr[lag - 1] &&
+                    autocorr[lag] > autocorr[lag + 1]) {
                     bestLag = lag;
+                    break; // Take first significant peak
                 }
             }
 
-            if (bestLag === 0 || bestCorr <= 0) {
-                // Fallback to peak counting if autocorrelation fails
-                return calculateRespiratoryRateFallback(smoothed);
+            if (bestLag === 0) {
+                // No clear peak found, use maximum in range as fallback
+                let maxCorr = 0;
+                for (let lag = minLag; lag <= maxLag; lag++) {
+                    if (autocorr[lag] > maxCorr) {
+                        maxCorr = autocorr[lag];
+                        bestLag = lag;
+                    }
+                }
             }
 
-            // Step 4: Convert lag (in beats) to respiratory rate
-            // Lag represents beats per breath cycle
-            // Need average beat duration to convert to time
-            const totalDurationMs = rrIntervals.reduce((a, b) => a + b, 0);
-            const avgBeatMs = totalDurationMs / rrIntervals.length;
-            const breathPeriodMs = bestLag * avgBeatMs;
-            const breathsPerMinute = 60000 / breathPeriodMs;
+            if (bestLag === 0) return 14; // Default to typical sleep rate
 
-            return Math.max(8, Math.min(25, breathsPerMinute));
+            // Convert to respiratory rate
+            const periodMs = bestLag * avgRR;
+            const breathsPerMinute = 60000 / periodMs;
+
+            return Math.max(8, Math.min(25, Math.round(breathsPerMinute * 10) / 10));
         }
-
-        // Fallback: count peaks in smoothed RR signal
-        function calculateRespiratoryRateFallback(smoothedRR) {
-            if (smoothedRR.length < 20) return null;
-
-            // Find local maxima (peaks) - each breath cycle has one peak
-            let peaks = 0;
-            for (let i = 2; i < smoothedRR.length - 2; i++) {
-                if (smoothedRR[i] > smoothedRR[i-1] &&
-                    smoothedRR[i] > smoothedRR[i-2] &&
-                    smoothedRR[i] > smoothedRR[i+1] &&
-                    smoothedRR[i] > smoothedRR[i+2]) {
-                    peaks++;
-                }
-            }
-
-            // Estimate duration from the smoothed array length
-            // Each smoothed sample represents ~1 heartbeat on average
-            const avgRR = smoothedRR.reduce((a, b) => a + b, 0) / smoothedRR.length;
-            const durationMinutes = (smoothedRR.length * avgRR) / 60000;
 
             if (durationMinutes < 0.5) return null;
 
@@ -3629,13 +3687,28 @@
                 debug(`Sleep score: ${sleepMetrics.sleepScore}/100`);
             }
 
-            // Calculate RHR (lowest 5-10% of readings)
-            if (bpmsToUse.length >= 10) {
+            // Calculate RHR using 5th-15th percentile range (like Whoop)
+            // This avoids both outlier lows and captures the true resting baseline
+            if (bpmsToUse.length >= 20) {
                 const sortedBpms = [...bpmsToUse].sort((a, b) => a - b);
-                const rhrCount = Math.max(5, Math.floor(sortedBpms.length * 0.05));
-                const lowestBPMs = sortedBpms.slice(0, rhrCount);
-                sleepMetrics.rhr = Math.round(lowestBPMs.reduce((a, b) => a + b, 0) / rhrCount);
-                debug(`Lowest ${rhrCount} BPMs: [${lowestBPMs.join(', ')}]`);
+
+                // Use 5th to 15th percentile range
+                const p5Index = Math.floor(sortedBpms.length * 0.05);
+                const p15Index = Math.floor(sortedBpms.length * 0.15);
+                const rhrRange = sortedBpms.slice(p5Index, p15Index + 1);
+
+                if (rhrRange.length >= 3) {
+                    // Take median of the range (robust to outliers)
+                    rhrRange.sort((a, b) => a - b);
+                    sleepMetrics.rhr = rhrRange[Math.floor(rhrRange.length / 2)];
+                    debug(`RHR range (5th-15th%ile): [${rhrRange.slice(0, 5).join(', ')}...] median=${sleepMetrics.rhr}`);
+                } else {
+                    // Fallback: average of lowest 10%
+                    const rhrCount = Math.max(5, Math.floor(sortedBpms.length * 0.10));
+                    const lowestBPMs = sortedBpms.slice(0, rhrCount);
+                    sleepMetrics.rhr = Math.round(lowestBPMs.reduce((a, b) => a + b, 0) / rhrCount);
+                    debug(`RHR (lowest 10%): ${sleepMetrics.rhr} bpm`);
+                }
                 debug(`RHR calculated from ${metricsSource}: ${sleepMetrics.rhr} bpm`);
             }
 
