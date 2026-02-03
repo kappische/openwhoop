@@ -2572,6 +2572,118 @@
             return cleanRR(readings);
         }
 
+        // Find the most stable RR window approximating Slow Wave Sleep (SWS)
+        // Whoop measures HRV during the final SWS stage - characterized by:
+        // 1. Low heart rate (deep parasympathetic dominance)
+        // 2. Low SDNN (very stable, consistent beat-to-beat intervals)
+        // 3. Occurs in later sleep cycles (weight towards end of sleep)
+        function findSWSWindow(rrIntervals, windowSizeMs = 300000) {
+            // Need at least 30 RR intervals for meaningful analysis
+            if (rrIntervals.length < 30) return null;
+
+            // Convert window size from ms to approximate beat count
+            // At 60bpm = 1000ms per beat, 300000ms = 300 beats
+            // At 50bpm = 1200ms per beat, 300000ms = 250 beats
+            // Use smaller windows to find stable periods
+            const avgRR = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
+            const beatsPerWindow = Math.floor(windowSizeMs / avgRR);
+            const windowSize = Math.min(Math.max(beatsPerWindow, 30), 150); // 30-150 beats per window
+
+            if (rrIntervals.length < windowSize) {
+                // Not enough data for windowing - return all data
+                return { rrIntervals, reason: 'insufficient_data_for_windowing' };
+            }
+
+            // Analyze each window for SWS characteristics
+            const windows = [];
+            const step = Math.max(1, Math.floor(windowSize / 4)); // 75% overlap for better resolution
+
+            for (let i = 0; i <= rrIntervals.length - windowSize; i += step) {
+                const window = rrIntervals.slice(i, i + windowSize);
+
+                // Calculate mean RR (inverse of HR - higher RR = lower HR)
+                const meanRR = window.reduce((a, b) => a + b, 0) / window.length;
+
+                // Calculate SDNN (standard deviation of RR - stability metric)
+                const variance = window.reduce((sum, rr) => sum + Math.pow(rr - meanRR, 2), 0) / window.length;
+                const sdnn = Math.sqrt(variance);
+
+                // Calculate RMSSD for this window
+                let sumSquaredDiff = 0;
+                for (let j = 1; j < window.length; j++) {
+                    const diff = window[j] - window[j - 1];
+                    sumSquaredDiff += diff * diff;
+                }
+                const rmssd = Math.sqrt(sumSquaredDiff / (window.length - 1));
+
+                // Coefficient of variation (normalized stability - lower = more stable)
+                const cv = (sdnn / meanRR) * 100;
+
+                windows.push({
+                    startIndex: i,
+                    endIndex: i + windowSize,
+                    meanRR,
+                    sdnn,
+                    rmssd,
+                    cv,
+                    window
+                });
+            }
+
+            if (windows.length === 0) return null;
+
+            // Find windows that match SWS characteristics:
+            // - Low HR (high meanRR) - bottom 30% of HR readings
+            // - Low CV (stable) - bottom 30% of CV readings
+            // This identifies the most parasympathetic-dominant periods
+
+            const sortedByMeanRR = [...windows].sort((a, b) => b.meanRR - a.meanRR); // Higher RR = lower HR
+            const sortedByCV = [...windows].sort((a, b) => a.cv - b.cv); // Lower CV = more stable
+
+            // Get thresholds for "low HR" and "stable" windows
+            const lowHRThresholdIndex = Math.floor(windows.length * 0.3);
+            const lowHRThreshold = sortedByMeanRR[lowHRThresholdIndex]?.meanRR || sortedByMeanRR[0].meanRR;
+            const stableThresholdIndex = Math.floor(windows.length * 0.3);
+            const stableThreshold = sortedByCV[stableThresholdIndex]?.cv || sortedByCV[0].cv;
+
+            // Find windows meeting both criteria (SWS candidates)
+            const swsCandidates = windows.filter(w =>
+                w.meanRR >= lowHRThreshold && w.cv <= stableThreshold
+            );
+
+            let selectedWindow;
+            let reason;
+
+            if (swsCandidates.length > 0) {
+                // Whoop weights towards "last SWS" - take the latest qualifying window
+                selectedWindow = swsCandidates[swsCandidates.length - 1];
+                reason = 'sws_detected';
+
+                const hrFromRR = Math.round(60000 / selectedWindow.meanRR);
+                debug(`SWS window found: ${swsCandidates.length} candidates, using last one`);
+                debug(`SWS characteristics: HR=${hrFromRR}bpm, SDNN=${selectedWindow.sdnn.toFixed(1)}ms, CV=${selectedWindow.cv.toFixed(1)}%`);
+            } else {
+                // No window meets both criteria - use the most stable window
+                // (prioritize stability over low HR as it's more indicative of deep rest)
+                selectedWindow = sortedByCV[0];
+                reason = 'most_stable_fallback';
+
+                const hrFromRR = Math.round(60000 / selectedWindow.meanRR);
+                debug(`No SWS window found, using most stable: HR=${hrFromRR}bpm, CV=${selectedWindow.cv.toFixed(1)}%`);
+            }
+
+            return {
+                rrIntervals: selectedWindow.window,
+                rmssd: selectedWindow.rmssd,
+                sdnn: selectedWindow.sdnn,
+                meanRR: selectedWindow.meanRR,
+                cv: selectedWindow.cv,
+                reason,
+                windowCount: windows.length,
+                swsCandidateCount: swsCandidates.length
+            };
+        }
+
         // Calculate stress score (ported from Rust implementation)
         // Uses BPM readings converted to RR intervals
         // Returns 0-10 scale (lower = less stressed)
@@ -3828,27 +3940,35 @@
             }
 
             // Calculate HRV using RAW beat-to-beat RR intervals (not averaged per-reading)
-            // This gives true beat-to-beat variability like Whoop's official calculation
+            // Like Whoop: measure HRV specifically during the most stable window (approximating SWS)
+            // Whoop uses "dynamic average during sleep weighted towards last slow wave sleep stage"
             const rawRRforHRV = getRawRR(readingsForHRV);
             if (rawRRforHRV.length >= 30) {
-                // Use 5-minute windows (at ~60bpm = 300 beats) for rolling HRV if enough data
-                const WINDOW_SIZE = 300;
-                if (rawRRforHRV.length >= WINDOW_SIZE * 2) {
-                    // Rolling RMSSD across windows, then average
-                    const hrvValues = [];
-                    for (let i = 0; i <= rawRRforHRV.length - WINDOW_SIZE; i += Math.floor(WINDOW_SIZE / 2)) {
-                        const window = rawRRforHRV.slice(i, i + WINDOW_SIZE);
-                        const rmssd = calculateRMSSD(window);
-                        if (rmssd !== null && rmssd > 0) hrvValues.push(rmssd);
+                // Find the most stable window approximating Slow Wave Sleep
+                // This matches Whoop's methodology of measuring during final SWS
+                const swsResult = findSWSWindow(rawRRforHRV, 300000); // 5-minute windows
+
+                if (swsResult && swsResult.rrIntervals && swsResult.rrIntervals.length >= 30) {
+                    // Use pre-calculated RMSSD from SWS window if available
+                    if (swsResult.rmssd !== undefined) {
+                        sleepMetrics.hrv = Math.round(swsResult.rmssd);
+                    } else {
+                        sleepMetrics.hrv = Math.round(calculateRMSSD(swsResult.rrIntervals));
                     }
-                    if (hrvValues.length > 0) {
-                        sleepMetrics.hrv = Math.round(hrvValues.reduce((a, b) => a + b, 0) / hrvValues.length);
-                        debug(`HRV (rolling RMSSD, raw RR) from ${metricsSource}: ${sleepMetrics.hrv} ms (${rawRRforHRV.length} raw intervals, ${hrvValues.length} windows)`);
+
+                    const hrFromSWS = swsResult.meanRR ? Math.round(60000 / swsResult.meanRR) : null;
+                    debug(`HRV (SWS method) from ${metricsSource}: ${sleepMetrics.hrv} ms`);
+                    debug(`  SWS window: ${swsResult.rrIntervals.length} beats, ${swsResult.reason}`);
+                    if (hrFromSWS) {
+                        debug(`  Window HR: ${hrFromSWS} bpm, SDNN: ${swsResult.sdnn?.toFixed(1)}ms, CV: ${swsResult.cv?.toFixed(1)}%`);
+                    }
+                    if (swsResult.windowCount) {
+                        debug(`  Analyzed ${swsResult.windowCount} windows, ${swsResult.swsCandidateCount} met SWS criteria`);
                     }
                 } else {
-                    // Not enough for rolling - use simple RMSSD on all raw intervals
+                    // Fallback: not enough data for SWS detection - use simple RMSSD
                     sleepMetrics.hrv = Math.round(calculateRMSSD(rawRRforHRV));
-                    debug(`HRV (RMSSD, raw RR) from ${metricsSource}: ${sleepMetrics.hrv} ms (${rawRRforHRV.length} raw intervals)`);
+                    debug(`HRV (simple RMSSD, no SWS) from ${metricsSource}: ${sleepMetrics.hrv} ms (${rawRRforHRV.length} raw intervals)`);
                 }
             } else if (cleanedRR.length >= 60) {
                 // Fallback: not enough raw RR, use averaged (less accurate)
