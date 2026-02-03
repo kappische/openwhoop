@@ -3108,28 +3108,88 @@
             );
         }
 
-        // Calculate respiratory rate from RR intervals
-        // Normal breathing causes periodic variations in HR (respiratory sinus arrhythmia)
+        // Calculate respiratory rate from RR intervals using autocorrelation
+        // Respiratory Sinus Arrhythmia (RSA): breathing modulates HR at 0.15-0.4 Hz (9-24 rpm)
         function calculateRespiratoryRate(rrIntervals) {
-            if (rrIntervals.length < 30) return null;
+            if (rrIntervals.length < 60) return null;
 
-            // Simple estimation: count peaks in RR interval variations
-            // More accurate methods use FFT, but this gives reasonable estimates
-            const avgRR = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
-            let crossings = 0;
+            // Step 1: Smooth RR intervals with moving average to reduce beat-to-beat noise
+            const windowSize = 5;
+            const smoothed = [];
+            for (let i = 0; i < rrIntervals.length - windowSize + 1; i++) {
+                const window = rrIntervals.slice(i, i + windowSize);
+                smoothed.push(window.reduce((a, b) => a + b, 0) / windowSize);
+            }
 
-            for (let i = 1; i < rrIntervals.length; i++) {
-                if ((rrIntervals[i - 1] < avgRR && rrIntervals[i] >= avgRR) ||
-                    (rrIntervals[i - 1] >= avgRR && rrIntervals[i] < avgRR)) {
-                    crossings++;
+            if (smoothed.length < 30) return null;
+
+            // Step 2: Detrend by subtracting the mean
+            const mean = smoothed.reduce((a, b) => a + b, 0) / smoothed.length;
+            const detrended = smoothed.map(v => v - mean);
+
+            // Step 3: Calculate autocorrelation to find dominant period
+            // Look for peaks in lag range corresponding to 8-25 breaths/min
+            // At ~60 bpm (1 beat/sec), 12 rpm = 5 beats/breath, 20 rpm = 3 beats/breath
+            const minLag = 3;   // ~20 rpm at 60bpm
+            const maxLag = Math.min(15, Math.floor(detrended.length / 4)); // ~4 rpm limit
+
+            let bestLag = 0;
+            let bestCorr = -1;
+
+            for (let lag = minLag; lag <= maxLag; lag++) {
+                let sum = 0;
+                let count = 0;
+                for (let i = 0; i < detrended.length - lag; i++) {
+                    sum += detrended[i] * detrended[i + lag];
+                    count++;
+                }
+                const corr = count > 0 ? sum / count : 0;
+                if (corr > bestCorr) {
+                    bestCorr = corr;
+                    bestLag = lag;
                 }
             }
 
-            // Each breath cycle causes 2 crossings, convert to breaths per minute
-            const durationSeconds = (rrIntervals.reduce((a, b) => a + b, 0)) / 1000;
-            const breathsPerMinute = (crossings / 2) * (60 / durationSeconds);
+            if (bestLag === 0 || bestCorr <= 0) {
+                // Fallback to peak counting if autocorrelation fails
+                return calculateRespiratoryRateFallback(smoothed);
+            }
 
-            return Math.max(8, Math.min(25, breathsPerMinute)); // Clamp to reasonable range
+            // Step 4: Convert lag (in beats) to respiratory rate
+            // Lag represents beats per breath cycle
+            // Need average beat duration to convert to time
+            const totalDurationMs = rrIntervals.reduce((a, b) => a + b, 0);
+            const avgBeatMs = totalDurationMs / rrIntervals.length;
+            const breathPeriodMs = bestLag * avgBeatMs;
+            const breathsPerMinute = 60000 / breathPeriodMs;
+
+            return Math.max(8, Math.min(25, breathsPerMinute));
+        }
+
+        // Fallback: count peaks in smoothed RR signal
+        function calculateRespiratoryRateFallback(smoothedRR) {
+            if (smoothedRR.length < 20) return null;
+
+            // Find local maxima (peaks) - each breath cycle has one peak
+            let peaks = 0;
+            for (let i = 2; i < smoothedRR.length - 2; i++) {
+                if (smoothedRR[i] > smoothedRR[i-1] &&
+                    smoothedRR[i] > smoothedRR[i-2] &&
+                    smoothedRR[i] > smoothedRR[i+1] &&
+                    smoothedRR[i] > smoothedRR[i+2]) {
+                    peaks++;
+                }
+            }
+
+            // Estimate duration from the smoothed array length
+            // Each smoothed sample represents ~1 heartbeat on average
+            const avgRR = smoothedRR.reduce((a, b) => a + b, 0) / smoothedRR.length;
+            const durationMinutes = (smoothedRR.length * avgRR) / 60000;
+
+            if (durationMinutes < 0.5) return null;
+
+            const breathsPerMinute = peaks / durationMinutes;
+            return Math.max(8, Math.min(25, breathsPerMinute));
         }
 
         // Process historical data to find sleep and calculate metrics
