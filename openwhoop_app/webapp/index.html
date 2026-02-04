@@ -3647,7 +3647,9 @@
         // Respiratory Sinus Arrhythmia (RSA): breathing modulates HR at 0.15-0.4 Hz (9-24 rpm)
         // During sleep, typical range is 12-16 rpm
         function calculateRespiratoryRate(rrIntervals) {
-            if (rrIntervals.length < 60) return null;
+            // Need at least 40 RR intervals: smoothing uses 9-sample window,
+            // and we need 30+ smoothed values for peak detection (40-9+1=32)
+            if (rrIntervals.length < 40) return null;
 
             // Step 1: Heavy smoothing to extract respiratory oscillation
             // Use larger window (9 samples) to remove beat-to-beat noise
