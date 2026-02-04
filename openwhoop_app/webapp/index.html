@@ -2529,17 +2529,57 @@
             return cleaned;
         }
 
-        // Get all raw RR intervals from readings (for respiratory rate calculation)
-        // Respiratory rate needs fine-grained beat-to-beat variability
+        // Get all raw RR intervals from readings with artifact filtering
+        // Applies both physiological range and BPM validation to remove artifacts
         function getRawRR(readings) {
             const raw = [];
             for (const reading of readings) {
                 if (!reading.rr || reading.rr.length === 0) continue;
+
                 // Filter to valid physiological range (40-200 bpm = 300-1500ms)
-                const validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
+                let validRR = reading.rr.filter(rr => rr >= 300 && rr <= 1500);
+
+                // Additionally validate against reported BPM if available
+                // RR should be within ~25% of expected value from BPM
+                // This removes artifacts like ectopic beats, motion noise
+                if (reading.bpm && reading.bpm > 0 && validRR.length > 0) {
+                    const expectedRR = 60000 / reading.bpm;
+                    const tolerance = expectedRR * 0.25; // 25% tolerance
+                    const bpmValidRR = validRR.filter(rr =>
+                        Math.abs(rr - expectedRR) <= tolerance
+                    );
+                    // Only use BPM-validated values if we have any
+                    if (bpmValidRR.length > 0) {
+                        validRR = bpmValidRR;
+                    }
+                }
+
                 raw.push(...validRR);
             }
             return raw;
+        }
+
+        // Apply successive difference filtering to remove ectopic beats
+        // Whoop and clinical HRV analysis filter out beats with >20% change from previous
+        function filterEctopicBeats(rrIntervals) {
+            if (rrIntervals.length < 2) return rrIntervals;
+
+            const filtered = [rrIntervals[0]]; // Keep first interval
+
+            for (let i = 1; i < rrIntervals.length; i++) {
+                const prev = filtered[filtered.length - 1];
+                const curr = rrIntervals[i];
+                const diff = Math.abs(curr - prev);
+                const threshold = prev * 0.20; // 20% threshold (standard for HRV analysis)
+
+                // Only include if change is within 20% of previous
+                if (diff <= threshold) {
+                    filtered.push(curr);
+                }
+                // If rejected, don't update reference - continue comparing to last good beat
+            }
+
+            return filtered;
         }
 
         // Calculate weighted RMSSD from sleep readings (like Whoop)
@@ -3647,13 +3687,14 @@
         // Respiratory Sinus Arrhythmia (RSA): breathing modulates HR at 0.15-0.4 Hz (9-24 rpm)
         // During sleep, typical range is 12-16 rpm
         function calculateRespiratoryRate(rrIntervals) {
-            // Need at least 40 RR intervals: smoothing uses 9-sample window,
-            // and we need 30+ smoothed values for peak detection (40-9+1=32)
-            if (rrIntervals.length < 40) return null;
+            // Need at least 50 RR intervals: smoothing uses 15-sample window,
+            // and we need 30+ smoothed values for peak detection (50-15+1=36)
+            if (rrIntervals.length < 50) return null;
 
             // Step 1: Heavy smoothing to extract respiratory oscillation
-            // Use larger window (9 samples) to remove beat-to-beat noise
-            const windowSize = 9;
+            // Use 15-sample window to better isolate low-frequency respiratory modulation
+            // This filters out beat-to-beat variability and cardiac noise
+            const windowSize = 15;
             const smoothed = [];
             for (let i = 0; i < rrIntervals.length - windowSize + 1; i++) {
                 const window = rrIntervals.slice(i, i + windowSize);
@@ -3665,20 +3706,35 @@
             // Calculate average RR for later conversion
             const avgRR = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
 
+            // Calculate the amplitude of variation to validate signal quality
+            const smoothedMin = Math.min(...smoothed);
+            const smoothedMax = Math.max(...smoothed);
+            const amplitude = smoothedMax - smoothedMin;
+
+            // If amplitude is too small, the signal doesn't have clear respiratory modulation
+            // Typical RSA amplitude is 20-100ms during sleep
+            if (amplitude < 10) {
+                return calculateRespiratoryRateAutocorr(smoothed, avgRR);
+            }
+
             // Step 2: Find peaks and troughs in smoothed signal
+            // Use 3-sample look-ahead/behind for more robust detection
             const peaks = [];
             const troughs = [];
 
-            for (let i = 2; i < smoothed.length - 2; i++) {
-                // Peak detection with 2-sample look-ahead/behind
-                if (smoothed[i] > smoothed[i-1] && smoothed[i] > smoothed[i-2] &&
-                    smoothed[i] > smoothed[i+1] && smoothed[i] > smoothed[i+2]) {
-                    peaks.push(i);
+            for (let i = 3; i < smoothed.length - 3; i++) {
+                // Peak detection - must be local maximum in 7-sample window
+                if (smoothed[i] > smoothed[i-1] && smoothed[i] > smoothed[i-2] && smoothed[i] > smoothed[i-3] &&
+                    smoothed[i] > smoothed[i+1] && smoothed[i] > smoothed[i+2] && smoothed[i] > smoothed[i+3]) {
+                    // Additionally check that peak has significant amplitude (>30% of total range)
+                    if ((smoothed[i] - smoothedMin) > amplitude * 0.3) {
+                        peaks.push({ index: i, value: smoothed[i] });
+                    }
                 }
                 // Trough detection
-                if (smoothed[i] < smoothed[i-1] && smoothed[i] < smoothed[i-2] &&
-                    smoothed[i] < smoothed[i+1] && smoothed[i] < smoothed[i+2]) {
-                    troughs.push(i);
+                if (smoothed[i] < smoothed[i-1] && smoothed[i] < smoothed[i-2] && smoothed[i] < smoothed[i-3] &&
+                    smoothed[i] < smoothed[i+1] && smoothed[i] < smoothed[i+2] && smoothed[i] < smoothed[i+3]) {
+                    troughs.push({ index: i, value: smoothed[i] });
                 }
             }
 
@@ -3690,10 +3746,11 @@
             // Step 3: Calculate periods between consecutive peaks
             const periods = [];
             for (let i = 1; i < peaks.length; i++) {
-                const periodBeats = peaks[i] - peaks[i-1];
-                // Filter out unreasonable periods (expect 3-8 beats per breath at 60bpm)
-                // This corresponds to 7.5-20 rpm
-                if (periodBeats >= 3 && periodBeats <= 10) {
+                const periodBeats = peaks[i].index - peaks[i-1].index;
+                // Filter to physiological breathing range during sleep
+                // At 60 bpm: 4 beats = 15 rpm (upper normal), 8 beats = 7.5 rpm (lower normal)
+                // This stricter range filters out cardiac noise (which typically shows as ~3 beat cycles)
+                if (periodBeats >= 4 && periodBeats <= 8) {
                     periods.push(periodBeats);
                 }
             }
@@ -3711,7 +3768,7 @@
             const periodMs = medianPeriod * avgRR;
             const breathsPerMinute = 60000 / periodMs;
 
-            return Math.max(8, Math.min(25, Math.round(breathsPerMinute * 10) / 10));
+            return Math.max(8, Math.min(20, Math.round(breathsPerMinute * 10) / 10));
         }
 
         // Fallback: autocorrelation method
@@ -3722,11 +3779,11 @@
             const mean = smoothed.reduce((a, b) => a + b, 0) / smoothed.length;
             const detrended = smoothed.map(v => v - mean);
 
-            // Target lag range: 12-18 rpm during sleep
-            // At 60 bpm: 12 rpm = 5 beats, 18 rpm = 3.3 beats
-            // Use 3-8 beat lag range
-            const minLag = 3;
-            const maxLag = Math.min(10, Math.floor(detrended.length / 4));
+            // Target lag range: 10-18 rpm during sleep (normal adult sleep breathing)
+            // At 60 bpm: 10 rpm = 6 beats, 18 rpm = 3.3 beats
+            // Use 4-8 beat lag range to avoid detecting cardiac noise at ~3 beat cycles
+            const minLag = 4;
+            const maxLag = Math.min(8, Math.floor(detrended.length / 4));
 
             // Find first significant peak in autocorrelation (not maximum)
             // This is more robust than finding the global maximum
@@ -3778,7 +3835,8 @@
             const periodMs = bestLag * avgRR;
             const breathsPerMinute = 60000 / periodMs;
 
-            return Math.max(8, Math.min(25, Math.round(breathsPerMinute * 10) / 10));
+            // Cap at 20 rpm - higher values likely indicate noise, not breathing
+            return Math.max(8, Math.min(20, Math.round(breathsPerMinute * 10) / 10));
         }
 
         // Process historical data to find sleep and calculate metrics
@@ -3979,7 +4037,17 @@
             // Calculate HRV using RAW beat-to-beat RR intervals (not averaged per-reading)
             // Like Whoop: measure HRV specifically during the most stable window (approximating SWS)
             // Whoop uses "dynamic average during sleep weighted towards last slow wave sleep stage"
-            const rawRRforHRV = getRawRR(readingsForHRV);
+            let rawRRforHRV = getRawRR(readingsForHRV);
+
+            // Apply ectopic beat filtering to remove artifacts before HRV calculation
+            // This is critical - a single ectopic beat can inflate RMSSD by 10x or more
+            const rawRRBeforeFilter = rawRRforHRV.length;
+            rawRRforHRV = filterEctopicBeats(rawRRforHRV);
+            const ectopicRemoved = rawRRBeforeFilter - rawRRforHRV.length;
+            if (ectopicRemoved > 0) {
+                debug(`HRV: Filtered ${ectopicRemoved} ectopic/artifact beats (${rawRRBeforeFilter} → ${rawRRforHRV.length})`);
+            }
+
             if (rawRRforHRV.length >= 30) {
                 // Find the most stable window approximating Slow Wave Sleep
                 // This matches Whoop's methodology of measuring during final SWS
@@ -4024,8 +4092,10 @@
             }
 
             // Calculate respiratory rate (using RAW RR intervals - needs beat-to-beat variability)
+            // Note: We use the RR data before ectopic filtering because respiratory sinus arrhythmia
+            // (RSA) naturally causes ~5-15% beat-to-beat variation, which we want to preserve
             const rawRR = getRawRR(readingsForHRV);
-            if (rawRR.length >= 30) {
+            if (rawRR.length >= 50) {  // Need 50+ for 15-sample smoothing window
                 sleepMetrics.respRate = calculateRespiratoryRate(rawRR);
                 debug(`Resp rate calculated from ${metricsSource}: ${sleepMetrics.respRate?.toFixed(1)} rpm (${rawRR.length} raw RR intervals)`);
 
