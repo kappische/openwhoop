@@ -4617,20 +4617,21 @@
                 }
 
                 debug(`Found saved device: ${savedDevice.name || 'Unknown'}`);
-                device = savedDevice;
+                // Note: Don't set global 'device' until connection succeeds
 
-                // Set up abort controller with timeout
+                // Brief advertisement check with short timeout (2s) - just to see if device is nearby
+                // Don't block manual connection attempts with long waits
                 const abortController = new AbortController();
-                const timeout = setTimeout(() => abortController.abort(), 10000);
+                const timeout = setTimeout(() => abortController.abort(), 2000);
+                let deviceNearby = false;
 
-                // Watch for device to become available
-                savedDevice.addEventListener('advertisementreceived', async (event) => {
+                savedDevice.addEventListener('advertisementreceived', (event) => {
                     clearTimeout(timeout);
-                    abortController.abort(); // Stop watching
+                    abortController.abort();
+                    deviceNearby = true;
                     debug(`Device advertising detected, RSSI: ${event.rssi}`);
                 });
 
-                // Start watching for advertisements (device must be nearby)
                 try {
                     await savedDevice.watchAdvertisements({ signal: abortController.signal });
                 } catch (e) {
@@ -4639,9 +4640,23 @@
                     }
                 }
 
-                // Try to connect directly
+                // If no advertisement seen, device is probably not nearby - skip auto-connect
+                if (!deviceNearby) {
+                    debug('Device not advertising nearby - skipping auto-connect');
+                    document.getElementById('auto-connect-status').textContent = 'Device not nearby';
+                    return false;
+                }
+
+                // Try to connect directly with a connection timeout
                 debug('Attempting GATT connection...');
-                const server = await device.gatt.connect();
+                const connectionPromise = savedDevice.gatt.connect();
+                const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Connection timeout')), 5000)
+                );
+                const server = await Promise.race([connectionPromise, timeoutPromise]);
+
+                // Connection succeeded - now set the global device
+                device = savedDevice;
                 debug('GATT connected via auto-connect');
 
                 const service = await server.getPrimaryService(WHOOP_SERVICE);
@@ -4764,6 +4779,9 @@
 
             } catch (e) {
                 debug('Auto-connect failed: ' + e.message);
+                // Clean up any partial state to not interfere with manual connect
+                device = null;
+                cmdChar = null;
                 document.getElementById('auto-connect-status').textContent = 'Could not auto-connect';
                 // Show forget device option if we have a saved device
                 if (localStorage.getItem('whoop_device_id')) {
