@@ -1913,6 +1913,7 @@
         let intentionalDisconnect = false;
         let reconnectAttempts = 0;
         const maxReconnectAttempts = 3;
+        let isReconnecting = false;  // Guard against concurrent reconnect attempts
 
         // Historical/Sleep data from device
         let historicalData = []; // All historical readings
@@ -5029,13 +5030,26 @@
         async function attemptReconnect() {
             if (!device) {
                 debug('No device to reconnect to');
+                isReconnecting = false;
                 onDisconnect();
                 return;
             }
 
+            // Guard against concurrent reconnection attempts
+            if (isReconnecting) {
+                debug('Reconnection already in progress, skipping...');
+                return;
+            }
+            isReconnecting = true;
+
             try {
                 debug('Attempting GATT reconnect...');
-                const server = await device.gatt.connect();
+                // Add connection timeout to prevent hanging indefinitely
+                const connectionPromise = device.gatt.connect();
+                const timeoutPromise = new Promise((_, reject) =>
+                    setTimeout(() => reject(new Error('Connection timeout')), 5000)
+                );
+                const server = await Promise.race([connectionPromise, timeoutPromise]);
                 debug('GATT reconnected');
 
                 const service = await server.getPrimaryService(WHOOP_SERVICE);
@@ -5044,6 +5058,26 @@
                 const dataChar = await service.getCharacteristic(DATA_FROM_STRAP);
                 await dataChar.startNotifications();
                 dataChar.addEventListener('characteristicvaluechanged', handleNotification);
+
+                // Set up CMD_FROM_STRAP notifications (for battery responses, etc.)
+                try {
+                    const cmdFromChar = await service.getCharacteristic(CMD_FROM_STRAP);
+                    await cmdFromChar.startNotifications();
+                    cmdFromChar.addEventListener('characteristicvaluechanged', handleNotification);
+                    debug('CMD_FROM_STRAP notifications restarted');
+                } catch (e) {
+                    debug('CMD_FROM_STRAP not available: ' + e.message);
+                }
+
+                // Set up EVENTS_FROM_STRAP notifications
+                try {
+                    const eventsChar = await service.getCharacteristic(EVENTS_FROM_STRAP);
+                    await eventsChar.startNotifications();
+                    eventsChar.addEventListener('characteristicvaluechanged', handleNotification);
+                    debug('EVENTS_FROM_STRAP notifications restarted');
+                } catch (e) {
+                    debug('EVENTS_FROM_STRAP not available: ' + e.message);
+                }
 
                 // Re-initialize connection
                 await cmdChar.writeValueWithoutResponse(helloHarvard());
@@ -5066,6 +5100,7 @@
                 await cmdChar.writeValueWithoutResponse(requestHistoricalData(Date.now() - (reconnectAttempts * 5000)));
 
                 reconnectAttempts = 0;
+                isReconnecting = false;
                 document.getElementById('status-dot').classList.add('connected');
                 document.getElementById('status-text').textContent = '';
                 // Hide connect screen and show main app
@@ -5075,6 +5110,7 @@
 
             } catch (e) {
                 debug('Reconnect failed: ' + e.message);
+                isReconnecting = false;
                 onDisconnect(); // Will retry or give up
             }
         }
