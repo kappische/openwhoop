@@ -4415,6 +4415,11 @@
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
                 await sleep(100);
 
+                // Reset optical mode first - prevents leftover SpO2 mode from blocking HR
+                debug('Resetting optical mode...');
+                await cmdChar.writeValueWithoutResponse(disableOpticalData());
+                await sleep(100);
+
                 // Enable realtime modes immediately - they run in parallel with historical
                 debug('Enabling realtime HR...');
                 await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
@@ -4705,6 +4710,11 @@
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
                 await sleep(100);
 
+                // Reset optical mode first - prevents leftover SpO2 mode from blocking HR
+                debug('Resetting optical mode...');
+                await cmdChar.writeValueWithoutResponse(disableOpticalData());
+                await sleep(100);
+
                 debug('Enabling realtime HR...');
                 await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
                 await sleep(100);
@@ -4873,6 +4883,11 @@
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
                 await sleep(100);
 
+                // Reset optical mode first - prevents leftover SpO2 mode from blocking HR
+                debug('Resetting optical mode...');
+                await cmdChar.writeValueWithoutResponse(disableOpticalData());
+                await sleep(100);
+
                 debug('Enabling realtime HR...');
                 await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
                 await sleep(100);
@@ -5036,6 +5051,9 @@
                 await cmdChar.writeValueWithoutResponse(setClock());
                 await sleep(100);
                 await cmdChar.writeValueWithoutResponse(enterHighFreqSync());
+                await sleep(100);
+                // Reset optical mode first - prevents leftover SpO2 mode from blocking HR
+                await cmdChar.writeValueWithoutResponse(disableOpticalData());
                 await sleep(100);
                 await cmdChar.writeValueWithoutResponse(enableRealtimeHr());
                 await sleep(100);
