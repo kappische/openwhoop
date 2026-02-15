@@ -1949,9 +1949,12 @@
         // User settings (persisted to localStorage)
         let userSettings = {
             age: null,          // User's age for max HR calculation (220 - age)
-            hrvBaseline: null,  // Personal HRV baseline for recovery calc
-            rhrBaseline: null,  // Personal RHR baseline for recovery calc
-            broadcastHR: false  // Broadcast HR to compatible apps
+            hrvBaseline: null,  // Personal HRV baseline for recovery calc (7-day average)
+            rhrBaseline: null,  // Personal RHR baseline for recovery calc (7-day average)
+            broadcastHR: false, // Broadcast HR to compatible apps
+            // History for trend analysis (last 7 days)
+            hrvHistory: [],     // [{date: 'YYYY-MM-DD', value: number}, ...]
+            rhrHistory: []      // [{date: 'YYYY-MM-DD', value: number}, ...]
         };
 
         // Heart rate broadcast state
@@ -2760,46 +2763,60 @@
             };
         }
 
-        // Calculate stress score (ported from Rust implementation)
-        // Uses BPM readings converted to RR intervals
-        // Returns 0-10 scale (lower = less stressed)
+        // Calculate stress score using Baevsky's Stress Index (SI)
+        // Formula: SI = AMo / (2 × Mo × MxDMn)
+        // Where: Mo = mode (most common RR), AMo = mode amplitude (%), MxDMn = variation range
+        // Reference: Baevsky & Chernikova, 2017 - DOI: 10.12710/cardiometry.2017.6676
+        // Normal SI: 80-150, Mild stress: 150-300, High stress: >300
+        // Returns 0-10 scale (0 = relaxed, 10 = high stress)
         const MIN_STRESS_READINGS = 120;
+        const RR_BIN_WIDTH = 50; // 50ms bins per Baevsky standard
         function calculateStress(bpmReadings) {
             if (bpmReadings.length < MIN_STRESS_READINGS) return null;
 
             // Convert BPM to RR intervals (in ms)
-            const rrReadings = bpmReadings.map(bpm => Math.round(60 / bpm * 1000));
+            const rrReadings = bpmReadings.map(bpm => Math.round(60000 / bpm));
 
-            // Count frequency of each RR value
-            const counts = {};
+            // Find min and max for MxDMn (variation range)
+            const min = Math.min(...rrReadings);
+            const max = Math.max(...rrReadings);
+            const MxDMn = (max - min) / 1000; // Convert to seconds
+
+            if (MxDMn < 0.001) return 0; // No variability = no stress calculation possible
+
+            // Bin RR intervals into 50ms bins (Baevsky standard)
+            // This makes mode calculation more stable and comparable across measurements
+            const binCounts = {};
             for (const rr of rrReadings) {
-                counts[rr] = (counts[rr] || 0) + 1;
+                const bin = Math.round(rr / RR_BIN_WIDTH) * RR_BIN_WIDTH;
+                binCounts[bin] = (binCounts[bin] || 0) + 1;
             }
 
-            // Find min, max, mode
-            const rrValues = Object.keys(counts).map(Number);
-            const min = Math.min(...rrValues);
-            const max = Math.max(...rrValues);
-
-            // Find mode (most frequent RR value)
-            let mode = rrValues[0];
-            let modeFreq = counts[mode];
-            for (const rr of rrValues) {
-                if (counts[rr] > modeFreq) {
-                    mode = rr;
-                    modeFreq = counts[rr];
+            // Find mode (Mo) - center of most frequent bin
+            let Mo = 0;
+            let modeCount = 0;
+            for (const [bin, count] of Object.entries(binCounts)) {
+                if (count > modeCount) {
+                    Mo = Number(bin);
+                    modeCount = count;
                 }
             }
 
-            // Calculate variability ratio
-            const vr = (max - min) / 1000;
-            if (vr < 0.0001) return 0;
+            // Calculate AMo (mode amplitude) - percentage of RR intervals in mode bin
+            const AMo = (modeCount / rrReadings.length) * 100;
 
-            // Calculate stress score (Rust formula)
-            const aMode = (modeFreq / bpmReadings.length) * 100;
-            const stress = Math.round(aMode / (2 * vr * mode / 1000));
+            // Calculate Baevsky Stress Index: SI = AMo / (2 × Mo × MxDMn)
+            // Mo needs to be in seconds
+            const MoSeconds = Mo / 1000;
+            const SI = AMo / (2 * MoSeconds * MxDMn);
 
-            return Math.min(10, stress / 100);
+            // Convert to 0-10 scale
+            // Normal SI ~80-150, map to ~1-3 on our scale
+            // High stress SI >300, map to ~6+
+            // SI of 500+ maps to 10
+            const stressScore = Math.min(10, Math.max(0, (SI - 50) / 50));
+
+            return Math.round(stressScore * 10) / 10;
         }
 
         // Calculate sleep quality score (0-100 based on duration vs 8-hour ideal)
@@ -2812,45 +2829,103 @@
             return Math.round(Math.max(0, Math.min(100, score)));
         }
 
+        // Update HRV/RHR history and calculate baselines
+        // Called when new metrics are calculated
+        function updateMetricsHistory(hrv, rhr) {
+            const today = new Date().toISOString().split('T')[0];
+
+            // Update HRV history
+            if (hrv !== null && hrv > 0) {
+                // Remove today's entry if exists (update with latest)
+                userSettings.hrvHistory = userSettings.hrvHistory.filter(h => h.date !== today);
+                userSettings.hrvHistory.push({ date: today, value: hrv });
+                // Keep only last 14 days
+                userSettings.hrvHistory = userSettings.hrvHistory.slice(-14);
+                // Update baseline (7-day average, excluding today)
+                const recentHRV = userSettings.hrvHistory.filter(h => h.date !== today).slice(-7);
+                if (recentHRV.length >= 3) {
+                    userSettings.hrvBaseline = Math.round(
+                        recentHRV.reduce((sum, h) => sum + h.value, 0) / recentHRV.length
+                    );
+                }
+            }
+
+            // Update RHR history
+            if (rhr !== null && rhr > 0) {
+                userSettings.rhrHistory = userSettings.rhrHistory.filter(h => h.date !== today);
+                userSettings.rhrHistory.push({ date: today, value: rhr });
+                userSettings.rhrHistory = userSettings.rhrHistory.slice(-14);
+                const recentRHR = userSettings.rhrHistory.filter(h => h.date !== today).slice(-7);
+                if (recentRHR.length >= 3) {
+                    userSettings.rhrBaseline = Math.round(
+                        recentRHR.reduce((sum, h) => sum + h.value, 0) / recentRHR.length
+                    );
+                }
+            }
+        }
+
         // Calculate Recovery Score (0-100%)
-        // Based on HRV, RHR, and sleep - higher is better (more recovered)
+        // Based on HRV relative to baseline, RHR relative to baseline, and sleep
+        // Uses scientific approach: recovery = how today compares to your personal baseline
         function calculateRecovery(hrv, rhr, sleepHours) {
             if (!hrv && !rhr) return null;
 
+            // Update history and baselines
+            updateMetricsHistory(hrv, rhr);
+
             let score = 0;
-            let components = 0;
+            let totalWeight = 0;
 
-            // HRV component (40% weight) - higher HRV = better recovery
-            // Typical range: 20-100ms, normalize to 0-100
+            // HRV component (45% weight) - most important recovery indicator
+            // Score based on percentage of personal baseline
             if (hrv !== null) {
-                // Use baseline if available, otherwise use population average (~50ms)
-                const baseline = userSettings.hrvBaseline || 50;
-                const hrvScore = Math.min(100, (hrv / baseline) * 50);
-                score += hrvScore * 0.4;
-                components++;
+                const baseline = userSettings.hrvBaseline || 50; // Population average if no baseline
+                // HRV at 100% of baseline = 50 points, at 120% = 70 points, at 80% = 30 points
+                const hrvRatio = hrv / baseline;
+                // Sigmoid-like curve: rewards being above baseline, penalizes below
+                const hrvScore = Math.max(0, Math.min(100,
+                    50 + (hrvRatio - 1) * 100  // Each 10% above/below baseline = ±10 points
+                ));
+                score += hrvScore * 0.45;
+                totalWeight += 0.45;
             }
 
-            // RHR component (30% weight) - lower RHR = better recovery
-            // Typical range: 40-80 bpm
+            // RHR component (25% weight) - lower than baseline is better
             if (rhr !== null) {
-                // Use baseline if available, otherwise estimate from age
                 const baseline = userSettings.rhrBaseline || 60;
-                // Lower is better, so invert: 100 - (deviation * factor)
-                const rhrScore = Math.max(0, Math.min(100, 100 - ((rhr - baseline + 20) * 2)));
-                score += rhrScore * 0.3;
-                components++;
+                // RHR at baseline = 50 points, 5 bpm below = 70 points, 5 bpm above = 30 points
+                const rhrDiff = baseline - rhr; // Positive = better (lower RHR)
+                const rhrScore = Math.max(0, Math.min(100,
+                    50 + rhrDiff * 4  // Each 1 bpm below baseline = +4 points
+                ));
+                score += rhrScore * 0.25;
+                totalWeight += 0.25;
             }
 
-            // Sleep component (30% weight) - more sleep = better recovery (up to 9h)
+            // Sleep component (30% weight)
+            // Optimal sleep 7-9 hours, scoring based on that range
             if (sleepHours !== null && sleepHours !== undefined) {
-                const sleepScore = Math.min(100, (sleepHours / 8) * 100);
-                score += sleepScore * 0.3;
-                components++;
+                let sleepScore;
+                if (sleepHours >= 7 && sleepHours <= 9) {
+                    // Optimal range: 70-100 points
+                    sleepScore = 70 + ((sleepHours - 7) / 2) * 30;
+                } else if (sleepHours >= 6) {
+                    // 6-7 hours: 50-70 points
+                    sleepScore = 50 + (sleepHours - 6) * 20;
+                } else if (sleepHours >= 5) {
+                    // 5-6 hours: 30-50 points
+                    sleepScore = 30 + (sleepHours - 5) * 20;
+                } else {
+                    // <5 hours: 0-30 points
+                    sleepScore = Math.max(0, sleepHours * 6);
+                }
+                score += sleepScore * 0.30;
+                totalWeight += 0.30;
             }
 
-            // If we only have some components, scale up
-            if (components > 0 && components < 3) {
-                score = score / (components === 1 ? 0.4 : (components === 2 ? 0.7 : 1));
+            // Normalize if not all components available
+            if (totalWeight > 0 && totalWeight < 1) {
+                score = score / totalWeight;
             }
 
             return Math.round(Math.max(0, Math.min(100, score)));
@@ -6989,8 +7064,13 @@
                 temperatureBaseline: sensorData.baselineTemp,
                 historicalData: recentHistorical,
                 lastHistoricalSave: Date.now(),
-                userAge: userSettings.age,  // Preserve age setting
-                broadcastHR: userSettings.broadcastHR  // Preserve broadcast setting
+                userAge: userSettings.age,
+                broadcastHR: userSettings.broadcastHR,
+                // Recovery tracking - HRV/RHR history for baseline calculation
+                hrvHistory: userSettings.hrvHistory,
+                rhrHistory: userSettings.rhrHistory,
+                hrvBaseline: userSettings.hrvBaseline,
+                rhrBaseline: userSettings.rhrBaseline
             }));
         }
 
@@ -7071,6 +7151,18 @@
                             }
                         }, 1000);
                     }
+                }
+                // Load HRV/RHR history for recovery calculation
+                if (data.hrvHistory && Array.isArray(data.hrvHistory)) {
+                    userSettings.hrvHistory = data.hrvHistory;
+                }
+                if (data.rhrHistory && Array.isArray(data.rhrHistory)) {
+                    userSettings.rhrHistory = data.rhrHistory;
+                }
+                if (data.hrvBaseline) userSettings.hrvBaseline = data.hrvBaseline;
+                if (data.rhrBaseline) userSettings.rhrBaseline = data.rhrBaseline;
+                if (userSettings.hrvBaseline || userSettings.rhrBaseline) {
+                    debug(`Loaded baselines: HRV=${userSettings.hrvBaseline || 'none'}, RHR=${userSettings.rhrBaseline || 'none'}`);
                 }
                 // Update toggle state
                 const toggle = document.getElementById('alarm-toggle');
