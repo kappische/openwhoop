@@ -165,3 +165,268 @@ impl ActivityPeriod {
         periods
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    fn make_reading(hour: u32, min: u32, activity: Activity) -> ParsedHistoryReading {
+        ParsedHistoryReading {
+            time: NaiveDate::from_ymd_opt(2025, 1, 1)
+                .unwrap()
+                .and_hms_opt(hour, min, 0)
+                .unwrap(),
+            bpm: 70,
+            rr: vec![],
+            activity,
+        }
+    }
+
+    fn make_reading_at(day: u32, hour: u32, min: u32, activity: Activity) -> ParsedHistoryReading {
+        ParsedHistoryReading {
+            time: NaiveDate::from_ymd_opt(2025, 1, day)
+                .unwrap()
+                .and_hms_opt(hour, min, 0)
+                .unwrap(),
+            bpm: 70,
+            rr: vec![],
+            activity,
+        }
+    }
+
+    // ==================== smooth_spikes tests ====================
+
+    #[test]
+    fn test_smooth_spikes_empty_data() {
+        let mut data: Vec<ParsedHistoryReading> = vec![];
+        ActivityPeriod::smooth_spikes(&mut data);
+        assert!(data.is_empty());
+    }
+
+    #[test]
+    fn test_smooth_spikes_single_element() {
+        let mut data = vec![make_reading(8, 0, Activity::Sleep)];
+        ActivityPeriod::smooth_spikes(&mut data);
+        assert_eq!(data[0].activity, Activity::Sleep);
+    }
+
+    #[test]
+    fn test_smooth_spikes_two_elements() {
+        let mut data = vec![
+            make_reading(8, 0, Activity::Sleep),
+            make_reading(8, 1, Activity::Active),
+        ];
+        ActivityPeriod::smooth_spikes(&mut data);
+        // Should not change with only 2 elements
+        assert_eq!(data[0].activity, Activity::Sleep);
+        assert_eq!(data[1].activity, Activity::Active);
+    }
+
+    #[test]
+    fn test_smooth_spikes_removes_single_spike() {
+        // [Sleep, Active, Sleep] -> [Sleep, Sleep, Sleep]
+        let mut data = vec![
+            make_reading(8, 0, Activity::Sleep),
+            make_reading(8, 1, Activity::Active),
+            make_reading(8, 2, Activity::Sleep),
+        ];
+        ActivityPeriod::smooth_spikes(&mut data);
+        assert_eq!(data[0].activity, Activity::Sleep);
+        assert_eq!(data[1].activity, Activity::Sleep); // Smoothed
+        assert_eq!(data[2].activity, Activity::Sleep);
+    }
+
+    #[test]
+    fn test_smooth_spikes_preserves_sustained_change() {
+        // [Sleep, Active, Active, Sleep] -> no change
+        let mut data = vec![
+            make_reading(8, 0, Activity::Sleep),
+            make_reading(8, 1, Activity::Active),
+            make_reading(8, 2, Activity::Active),
+            make_reading(8, 3, Activity::Sleep),
+        ];
+        ActivityPeriod::smooth_spikes(&mut data);
+        assert_eq!(data[0].activity, Activity::Sleep);
+        assert_eq!(data[1].activity, Activity::Active);
+        assert_eq!(data[2].activity, Activity::Active);
+        assert_eq!(data[3].activity, Activity::Sleep);
+    }
+
+    #[test]
+    fn test_smooth_spikes_multiple_spikes() {
+        // [Sleep, Active, Sleep, Active, Sleep] -> [Sleep, Sleep, Sleep, Sleep, Sleep]
+        let mut data = vec![
+            make_reading(8, 0, Activity::Sleep),
+            make_reading(8, 1, Activity::Active),
+            make_reading(8, 2, Activity::Sleep),
+            make_reading(8, 3, Activity::Active),
+            make_reading(8, 4, Activity::Sleep),
+        ];
+        ActivityPeriod::smooth_spikes(&mut data);
+        assert_eq!(data[1].activity, Activity::Sleep);
+        assert_eq!(data[3].activity, Activity::Sleep);
+    }
+
+    // ==================== detect_changes tests ====================
+
+    #[test]
+    fn test_detect_changes_empty() {
+        let data: Vec<ParsedHistoryReading> = vec![];
+        let changes = ActivityPeriod::detect_changes(&data);
+        assert!(changes.is_empty());
+    }
+
+    #[test]
+    fn test_detect_changes_single_activity() {
+        let data = vec![
+            make_reading(8, 0, Activity::Sleep),
+            make_reading(8, 1, Activity::Sleep),
+            make_reading(8, 2, Activity::Sleep),
+        ];
+        let changes = ActivityPeriod::detect_changes(&data);
+        assert_eq!(changes.len(), 1);
+        assert!(matches!(changes[0].activity, Activity::Sleep));
+    }
+
+    #[test]
+    fn test_detect_changes_identifies_transitions() {
+        let data = vec![
+            make_reading(8, 0, Activity::Sleep),
+            make_reading(8, 1, Activity::Sleep),
+            make_reading(8, 2, Activity::Active),
+            make_reading(8, 3, Activity::Active),
+        ];
+        let changes = ActivityPeriod::detect_changes(&data);
+        assert_eq!(changes.len(), 2);
+        assert!(matches!(changes[0].activity, Activity::Sleep));
+        assert!(matches!(changes[1].activity, Activity::Active));
+    }
+
+    #[test]
+    fn test_detect_changes_gap_creates_new_period() {
+        // Gap > MAX_PAUSE (10 min) creates new period even with same activity
+        let data = vec![
+            make_reading(8, 0, Activity::Sleep),
+            make_reading(8, 1, Activity::Sleep),
+            make_reading(8, 15, Activity::Sleep), // 14 min gap > MAX_PAUSE
+        ];
+        let changes = ActivityPeriod::detect_changes(&data);
+        assert_eq!(changes.len(), 2);
+    }
+
+    // ==================== find_sleep tests ====================
+
+    #[test]
+    fn test_find_sleep_empty_events() {
+        let mut events: Vec<ActivityPeriod> = vec![];
+        assert!(ActivityPeriod::find_sleep(&mut events).is_none());
+    }
+
+    #[test]
+    fn test_find_sleep_no_sleep_events() {
+        let mut events = vec![ActivityPeriod {
+            activity: Activity::Active,
+            start: make_reading(8, 0, Activity::Active).time,
+            end: make_reading(10, 0, Activity::Active).time,
+            duration: TimeDelta::hours(2),
+        }];
+        assert!(ActivityPeriod::find_sleep(&mut events).is_none());
+        assert!(events.is_empty()); // Events are consumed
+    }
+
+    #[test]
+    fn test_find_sleep_ignores_short_sleep() {
+        // Sleep < 60 min should be ignored
+        let mut events = vec![ActivityPeriod {
+            activity: Activity::Sleep,
+            start: make_reading(8, 0, Activity::Sleep).time,
+            end: make_reading(8, 30, Activity::Sleep).time,
+            duration: TimeDelta::minutes(30),
+        }];
+        assert!(ActivityPeriod::find_sleep(&mut events).is_none());
+    }
+
+    #[test]
+    fn test_find_sleep_returns_first_valid_sleep() {
+        let mut events = vec![
+            ActivityPeriod {
+                activity: Activity::Active,
+                start: make_reading(7, 0, Activity::Active).time,
+                end: make_reading(8, 0, Activity::Active).time,
+                duration: TimeDelta::hours(1),
+            },
+            ActivityPeriod {
+                activity: Activity::Sleep,
+                start: make_reading_at(1, 23, 0, Activity::Sleep).time,
+                end: make_reading_at(2, 7, 0, Activity::Sleep).time,
+                duration: TimeDelta::hours(8),
+            },
+        ];
+        let sleep = ActivityPeriod::find_sleep(&mut events);
+        assert!(sleep.is_some());
+        assert!(matches!(sleep.unwrap().activity, Activity::Sleep));
+        assert_eq!(sleep.unwrap().duration, TimeDelta::hours(8));
+    }
+
+    // ==================== is_active tests ====================
+
+    #[test]
+    fn test_is_active_returns_true_for_active() {
+        let period = ActivityPeriod {
+            activity: Activity::Active,
+            start: make_reading(8, 0, Activity::Active).time,
+            end: make_reading(9, 0, Activity::Active).time,
+            duration: TimeDelta::hours(1),
+        };
+        assert!(period.is_active());
+    }
+
+    #[test]
+    fn test_is_active_returns_false_for_sleep() {
+        let period = ActivityPeriod {
+            activity: Activity::Sleep,
+            start: make_reading(23, 0, Activity::Sleep).time,
+            end: make_reading_at(2, 7, 0, Activity::Sleep).time,
+            duration: TimeDelta::hours(8),
+        };
+        assert!(!period.is_active());
+    }
+
+    // ==================== full detect pipeline tests ====================
+
+    #[test]
+    fn test_detect_empty_history() {
+        let mut history: Vec<ParsedHistoryReading> = vec![];
+        let periods = ActivityPeriod::detect(&mut history);
+        assert!(periods.is_empty());
+    }
+
+    #[test]
+    fn test_detect_single_activity_type() {
+        let mut history: Vec<ParsedHistoryReading> = (0..30)
+            .map(|i| make_reading(8, i, Activity::Sleep))
+            .collect();
+        let periods = ActivityPeriod::detect(&mut history);
+        // Should produce a single period
+        assert_eq!(periods.len(), 1);
+        assert!(matches!(periods[0].activity, Activity::Sleep));
+    }
+
+    #[test]
+    fn test_detect_smooths_and_merges() {
+        // Create readings spanning 20 minutes (> 15 min threshold)
+        // with a spike in the middle that should be smoothed
+        let mut history = vec![
+            make_reading(8, 0, Activity::Sleep),
+            make_reading(8, 5, Activity::Sleep),
+            make_reading(8, 10, Activity::Active), // Spike - should be smoothed
+            make_reading(8, 15, Activity::Sleep),
+            make_reading(8, 20, Activity::Sleep),
+        ];
+        let periods = ActivityPeriod::detect(&mut history);
+        // After smoothing, should be all sleep -> 1 period
+        assert_eq!(periods.len(), 1);
+        assert!(matches!(periods[0].activity, Activity::Sleep));
+    }
+}

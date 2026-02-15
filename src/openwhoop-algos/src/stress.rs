@@ -81,11 +81,35 @@ impl StressCalcParams {
 
 #[cfg(test)]
 mod tests {
-    use crate::stress::StressCalcParams;
+    use super::*;
+    use chrono::NaiveDate;
+    use whoop::Activity;
+
+    fn make_reading(bpm: u8) -> ParsedHistoryReading {
+        ParsedHistoryReading {
+            time: NaiveDate::from_ymd_opt(2025, 1, 1)
+                .unwrap()
+                .and_hms_opt(12, 0, 0)
+                .unwrap(),
+            bpm,
+            rr: vec![],
+            activity: Activity::Active,
+        }
+    }
+
+    // ==================== StressCalcParams tests ====================
 
     #[test]
-    fn test_stress_calc() {
-        let hr = [
+    fn test_stress_constant_hr_returns_zero() {
+        // All same BPM -> vr = 0 -> stress = 0
+        let hr = vec![100_u8; 120];
+        assert_eq!(StressCalcParams::new(hr).stress_score(), 0.0);
+    }
+
+    #[test]
+    fn test_stress_moderate_variation_sample_1() {
+        // Moderate HR variation (87-113 BPM) should produce low stress
+        let hr = vec![
             90, 89, 88, 87, 88, 92, 94, 95, 96, 97, 98, 97, 99, 101, 103, 104, 106, 107, 107, 108,
             108, 109, 108, 108, 108, 108, 109, 109, 110, 111, 113, 113, 113, 113, 113, 112, 111,
             110, 109, 108, 107, 106, 105, 104, 104, 103, 103, 103, 102, 101, 101, 100, 100, 100,
@@ -94,9 +118,14 @@ mod tests {
             96, 96, 96, 95, 94, 93, 93, 94, 94, 95, 96, 96, 96, 96, 95, 94, 95, 95, 96, 96, 96, 96,
             96, 97, 98,
         ];
-        dbg!(StressCalcParams::new(hr.to_vec()).stress_score());
+        let score = StressCalcParams::new(hr).stress_score();
+        assert_eq!(score, 0.67);
+    }
 
-        let hr = [
+    #[test]
+    fn test_stress_moderate_variation_sample_2() {
+        // Higher HR with variation (108-127 BPM)
+        let hr = vec![
             111, 112, 110, 111, 111, 113, 114, 116, 116, 116, 118, 117, 119, 118, 117, 117, 116,
             115, 115, 115, 115, 115, 115, 115, 115, 114, 113, 112, 112, 111, 111, 110, 110, 111,
             112, 114, 116, 116, 117, 117, 119, 121, 122, 123, 123, 124, 124, 123, 122, 120, 119,
@@ -106,9 +135,14 @@ mod tests {
             118, 120, 122, 123, 124, 124, 125, 125, 126, 126, 126, 126, 127, 127, 126, 125, 124,
             123,
         ];
-        dbg!(StressCalcParams::new(hr.to_vec()).stress_score());
+        let score = StressCalcParams::new(hr).stress_score();
+        assert_eq!(score, 1.52);
+    }
 
-        let hr = [
+    #[test]
+    fn test_stress_low_hr_low_variation() {
+        // Low resting HR (59-65 BPM) - typical of relaxed state
+        let hr = vec![
             60, 61, 59, 59, 59, 59, 59, 60, 60, 60, 60, 60, 61, 61, 61, 61, 61, 61, 61, 61, 63, 63,
             63, 63, 64, 63, 63, 63, 62, 62, 62, 62, 61, 61, 61, 61, 62, 62, 62, 62, 62, 62, 62, 62,
             62, 62, 62, 62, 62, 62, 62, 62, 62, 63, 63, 63, 63, 63, 63, 63, 64, 64, 64, 64, 64, 65,
@@ -116,9 +150,14 @@ mod tests {
             62, 62, 62, 61, 61, 61, 61, 62, 62, 62, 61, 61, 61, 61, 62, 62, 62, 62, 62, 63, 63, 63,
             63, 64, 63, 63, 63, 62, 62, 63, 63, 63,
         ];
-        dbg!(StressCalcParams::new(hr.to_vec()).stress_score());
+        let score = StressCalcParams::new(hr).stress_score();
+        assert_eq!(score, 1.56);
+    }
 
-        let hr = [
+    #[test]
+    fn test_stress_very_low_hr_with_variation() {
+        // Very low HR (46-60 BPM) with some variation - athletic heart rate
+        let hr = vec![
             50, 50, 50, 50, 51, 52, 54, 54, 54, 55, 56, 56, 57, 56, 56, 56, 56, 54, 52, 52, 51, 50,
             49, 49, 49, 49, 48, 47, 46, 47, 47, 48, 49, 50, 52, 51, 51, 51, 52, 53, 53, 54, 54, 55,
             55, 56, 54, 53, 52, 52, 53, 53, 50, 50, 50, 50, 50, 49, 49, 50, 49, 49, 49, 48, 48, 48,
@@ -126,9 +165,14 @@ mod tests {
             58, 60, 59, 59, 58, 58, 59, 58, 58, 57, 58, 59, 58, 58, 57, 57, 58, 59, 59, 59, 58, 56,
             55, 55, 54, 55, 55, 54, 55, 55, 55, 54,
         ];
-        dbg!(StressCalcParams::new(hr.to_vec()).stress_score());
+        let score = StressCalcParams::new(hr).stress_score();
+        assert_eq!(score, 0.18);
+    }
 
-        let hr = [
+    #[test]
+    fn test_stress_high_hr_recovery() {
+        // High HR (107-144 BPM) during cooldown/recovery
+        let hr = vec![
             140, 141, 142, 143, 144, 142, 140, 137, 136, 135, 134, 133, 133, 132, 131, 131, 131,
             130, 130, 129, 129, 127, 126, 125, 124, 124, 123, 122, 122, 121, 122, 122, 119, 119,
             119, 119, 118, 120, 121, 121, 121, 119, 119, 118, 117, 117, 116, 115, 114, 114, 114,
@@ -138,6 +182,62 @@ mod tests {
             118, 117, 116, 115, 118, 117, 116, 117, 117, 115, 114, 113, 112, 113, 113, 113, 114,
             114,
         ];
-        dbg!(StressCalcParams::new(hr.to_vec()).stress_score());
+        let score = StressCalcParams::new(hr).stress_score();
+        assert_eq!(score, 0.72);
+    }
+
+    // ==================== StressCalculator tests ====================
+
+    #[test]
+    fn test_calculate_stress_below_min_readings_returns_none() {
+        let readings: Vec<ParsedHistoryReading> = (0..100)
+            .map(|_| make_reading(80))
+            .collect();
+        assert!(StressCalculator::calculate_stress(&readings).is_none());
+    }
+
+    #[test]
+    fn test_calculate_stress_exactly_min_readings_returns_some() {
+        let readings: Vec<ParsedHistoryReading> = (0..120)
+            .map(|_| make_reading(80))
+            .collect();
+        let result = StressCalculator::calculate_stress(&readings);
+        assert!(result.is_some());
+        assert_eq!(result.unwrap().score, 0.0); // Constant HR -> 0 stress
+    }
+
+    #[test]
+    fn test_calculate_stress_empty_returns_none() {
+        let readings: Vec<ParsedHistoryReading> = vec![];
+        assert!(StressCalculator::calculate_stress(&readings).is_none());
+    }
+
+    #[test]
+    fn test_calculate_stress_uses_last_reading_time() {
+        let mut readings: Vec<ParsedHistoryReading> = (0..120)
+            .map(|i| {
+                let mut r = make_reading(80);
+                r.time = NaiveDate::from_ymd_opt(2025, 1, 1)
+                    .unwrap()
+                    .and_hms_opt(12, i as u32 / 60, i as u32 % 60)
+                    .unwrap();
+                r
+            })
+            .collect();
+
+        // Set last reading to specific time
+        readings.last_mut().unwrap().time = NaiveDate::from_ymd_opt(2025, 1, 1)
+            .unwrap()
+            .and_hms_opt(14, 30, 0)
+            .unwrap();
+
+        let result = StressCalculator::calculate_stress(&readings).unwrap();
+        assert_eq!(
+            result.time,
+            NaiveDate::from_ymd_opt(2025, 1, 1)
+                .unwrap()
+                .and_hms_opt(14, 30, 0)
+                .unwrap()
+        );
     }
 }

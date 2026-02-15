@@ -102,3 +102,184 @@ impl SleepCycle {
         (score * 100.0).clamp(0.0, 100.0)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::NaiveDate;
+
+    // ==================== calculate_rmssd tests ====================
+
+    #[test]
+    fn test_rmssd_empty_window_returns_none() {
+        let window: &[u64] = &[];
+        assert_eq!(SleepCycle::calculate_rmssd(window), None);
+    }
+
+    #[test]
+    fn test_rmssd_single_element_returns_none() {
+        let window = &[1000_u64];
+        assert_eq!(SleepCycle::calculate_rmssd(window), None);
+    }
+
+    #[test]
+    fn test_rmssd_constant_intervals_returns_zero() {
+        // Same RR intervals -> no difference -> RMSSD = 0
+        let window = &[1000_u64, 1000, 1000, 1000, 1000];
+        assert_eq!(SleepCycle::calculate_rmssd(window), Some(0));
+    }
+
+    #[test]
+    fn test_rmssd_with_variation() {
+        // RR intervals: [1000, 1100, 1000, 1100]
+        // Differences: [100, -100, 100]
+        // Squared: [10000, 10000, 10000]
+        // Mean: 10000
+        // RMSSD: sqrt(10000) = 100
+        let window = &[1000_u64, 1100, 1000, 1100];
+        assert_eq!(SleepCycle::calculate_rmssd(window), Some(100));
+    }
+
+    #[test]
+    fn test_rmssd_known_values() {
+        // RR intervals: [800, 850, 780, 900]
+        // Differences: [50, -70, 120]
+        // Squared: [2500, 4900, 14400]
+        // Mean: (2500 + 4900 + 14400) / 3 = 7266.67
+        // RMSSD: sqrt(7266.67) ≈ 85
+        let window = &[800_u64, 850, 780, 900];
+        let result = SleepCycle::calculate_rmssd(window).unwrap();
+        assert!(result >= 85 && result <= 86); // Allow for rounding
+    }
+
+    // ==================== sleep_score tests ====================
+
+    #[test]
+    fn test_sleep_score_ideal_8_hours_returns_100() {
+        let start = NaiveDate::from_ymd_opt(2025, 1, 1)
+            .unwrap()
+            .and_hms_opt(23, 0, 0)
+            .unwrap();
+        let end = NaiveDate::from_ymd_opt(2025, 1, 2)
+            .unwrap()
+            .and_hms_opt(7, 0, 0)
+            .unwrap();
+        // 8 hours = 100%
+        assert_eq!(SleepCycle::sleep_score(start, end), 100.0);
+    }
+
+    #[test]
+    fn test_sleep_score_4_hours_returns_0() {
+        // Due to integer division: 4 * 3600 / (8 * 3600) = 0
+        let start = NaiveDate::from_ymd_opt(2025, 1, 1)
+            .unwrap()
+            .and_hms_opt(23, 0, 0)
+            .unwrap();
+        let end = NaiveDate::from_ymd_opt(2025, 1, 2)
+            .unwrap()
+            .and_hms_opt(3, 0, 0)
+            .unwrap();
+        assert_eq!(SleepCycle::sleep_score(start, end), 0.0);
+    }
+
+    #[test]
+    fn test_sleep_score_10_hours_clamped_to_100() {
+        let start = NaiveDate::from_ymd_opt(2025, 1, 1)
+            .unwrap()
+            .and_hms_opt(22, 0, 0)
+            .unwrap();
+        let end = NaiveDate::from_ymd_opt(2025, 1, 2)
+            .unwrap()
+            .and_hms_opt(8, 0, 0)
+            .unwrap();
+        // 10 hours = 125% but clamped to 100
+        assert_eq!(SleepCycle::sleep_score(start, end), 100.0);
+    }
+
+    #[test]
+    fn test_sleep_score_zero_duration() {
+        let time = NaiveDate::from_ymd_opt(2025, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap();
+        assert_eq!(SleepCycle::sleep_score(time, time), 0.0);
+    }
+
+    // ==================== clean_rr tests ====================
+
+    #[test]
+    fn test_clean_rr_empty_input() {
+        let rr: Vec<Vec<u16>> = vec![];
+        assert_eq!(SleepCycle::clean_rr(rr), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn test_clean_rr_filters_empty_readings() {
+        let rr: Vec<Vec<u16>> = vec![vec![1000], vec![], vec![900]];
+        assert_eq!(SleepCycle::clean_rr(rr), vec![1000, 900]);
+    }
+
+    #[test]
+    fn test_clean_rr_averages_multiple_intervals() {
+        // Multiple RR intervals in one reading should be averaged
+        let rr: Vec<Vec<u16>> = vec![vec![800, 900, 1000]]; // avg = 900
+        assert_eq!(SleepCycle::clean_rr(rr), vec![900]);
+    }
+
+    #[test]
+    fn test_clean_rr_single_intervals() {
+        let rr: Vec<Vec<u16>> = vec![vec![1000], vec![950], vec![1050]];
+        assert_eq!(SleepCycle::clean_rr(rr), vec![1000, 950, 1050]);
+    }
+
+    // ==================== rolling_hrv tests ====================
+
+    #[test]
+    fn test_rolling_hrv_less_than_window_returns_empty() {
+        // Window size is 300, so fewer than 300 samples returns empty
+        let rr: Vec<u64> = (0..100).collect();
+        assert_eq!(SleepCycle::rolling_hrv(rr), Vec::<u64>::new());
+    }
+
+    #[test]
+    fn test_rolling_hrv_exact_window_size() {
+        // Exactly 300 samples should produce 1 HRV value
+        let rr: Vec<u64> = vec![1000; 300];
+        let result = SleepCycle::rolling_hrv(rr);
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0], 0); // Constant values -> 0 RMSSD
+    }
+
+    #[test]
+    fn test_rolling_hrv_multiple_windows() {
+        // 302 samples should produce 3 HRV values (windows at 0-299, 1-300, 2-301)
+        let rr: Vec<u64> = vec![1000; 302];
+        let result = SleepCycle::rolling_hrv(rr);
+        assert_eq!(result.len(), 3);
+    }
+
+    // ==================== duration tests ====================
+
+    #[test]
+    fn test_duration_calculation() {
+        let cycle = SleepCycle {
+            id: NaiveDate::from_ymd_opt(2025, 1, 2).unwrap(),
+            start: NaiveDate::from_ymd_opt(2025, 1, 1)
+                .unwrap()
+                .and_hms_opt(23, 0, 0)
+                .unwrap(),
+            end: NaiveDate::from_ymd_opt(2025, 1, 2)
+                .unwrap()
+                .and_hms_opt(7, 0, 0)
+                .unwrap(),
+            min_bpm: 50,
+            max_bpm: 70,
+            avg_bpm: 60,
+            min_hrv: 40,
+            max_hrv: 80,
+            avg_hrv: 60,
+            score: 100.0,
+        };
+        assert_eq!(cycle.duration(), TimeDelta::hours(8));
+    }
+}
