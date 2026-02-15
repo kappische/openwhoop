@@ -3745,13 +3745,15 @@
             }
 
             // Step 3: Calculate periods between consecutive peaks
+            // Convert to time-based filtering to handle varying heart rates
             const periods = [];
             for (let i = 1; i < peaks.length; i++) {
                 const periodBeats = peaks[i].index - peaks[i-1].index;
-                // Filter to physiological breathing range during sleep
-                // At 60 bpm: 4 beats = 15 rpm (upper normal), 8 beats = 7.5 rpm (lower normal)
-                // This stricter range filters out cardiac noise (which typically shows as ~3 beat cycles)
-                if (periodBeats >= 4 && periodBeats <= 8) {
+                // Convert beat period to milliseconds using average RR
+                const periodMs = periodBeats * avgRR;
+                // Filter to physiological breathing range: 8-20 rpm = 3000-7500ms period
+                // This scales correctly regardless of heart rate
+                if (periodMs >= 3000 && periodMs <= 7500) {
                     periods.push(periodBeats);
                 }
             }
@@ -3780,11 +3782,12 @@
             const mean = smoothed.reduce((a, b) => a + b, 0) / smoothed.length;
             const detrended = smoothed.map(v => v - mean);
 
-            // Target lag range: 10-18 rpm during sleep (normal adult sleep breathing)
-            // At 60 bpm: 10 rpm = 6 beats, 18 rpm = 3.3 beats
-            // Use 4-8 beat lag range to avoid detecting cardiac noise at ~3 beat cycles
-            const minLag = 4;
-            const maxLag = Math.min(8, Math.floor(detrended.length / 4));
+            // Target lag range: 8-20 rpm = 3000-7500ms period
+            // Convert to beat-based lags using avgRR to scale with heart rate
+            const minLagBeats = Math.max(2, Math.floor(3000 / avgRR));  // 20 rpm
+            const maxLagBeats = Math.ceil(7500 / avgRR);                 // 8 rpm
+            const minLag = minLagBeats;
+            const maxLag = Math.min(maxLagBeats, Math.floor(detrended.length / 4));
 
             // Find first significant peak in autocorrelation (not maximum)
             // This is more robust than finding the global maximum
@@ -3910,7 +3913,7 @@
 
                 // Track sleep periods (by activity type or nighttime with low HR)
                 const isSleepActivity = reading.activityType === 'sleep';
-                const isLikelySleep = isNighttime && reading.bpm < 80; // Nighttime + low HR
+                const isLikelySleep = isNighttime && reading.bpm < 70; // Nighttime + low HR (70 BPM typical sleep threshold)
 
                 if (isSleepActivity || isLikelySleep) {
                     if (!sleepStart) {
@@ -4010,27 +4013,28 @@
                 debug(`Sleep score: ${sleepMetrics.sleepScore}/100`);
             }
 
-            // Calculate RHR using 5th-15th percentile range (like Whoop)
-            // This avoids both outlier lows and captures the true resting baseline
-            if (bpmsToUse.length >= 20) {
+            // Calculate RHR using percentile range (like Whoop)
+            // Skip lowest 5% to avoid artifacts, use 5th-25th percentile for stable baseline
+            if (bpmsToUse.length >= 10) {
                 const sortedBpms = [...bpmsToUse].sort((a, b) => a - b);
 
-                // Use 5th to 15th percentile range
-                const p5Index = Math.floor(sortedBpms.length * 0.05);
-                const p15Index = Math.floor(sortedBpms.length * 0.15);
-                const rhrRange = sortedBpms.slice(p5Index, p15Index + 1);
+                // Use 5th to 25th percentile range (wider range for more data points)
+                // Ensure minimum of 5 values by adjusting indices for small datasets
+                const p5Index = Math.max(1, Math.floor(sortedBpms.length * 0.05));
+                const p25Index = Math.max(p5Index + 4, Math.floor(sortedBpms.length * 0.25));
+                const rhrRange = sortedBpms.slice(p5Index, Math.min(p25Index + 1, sortedBpms.length));
 
                 if (rhrRange.length >= 3) {
                     // Take median of the range (robust to outliers)
-                    rhrRange.sort((a, b) => a - b);
                     sleepMetrics.rhr = rhrRange[Math.floor(rhrRange.length / 2)];
-                    debug(`RHR range (5th-15th%ile): [${rhrRange.slice(0, 5).join(', ')}...] median=${sleepMetrics.rhr}`);
+                    debug(`RHR range (5th-25th%ile): [${rhrRange.slice(0, 5).join(', ')}${rhrRange.length > 5 ? '...' : ''}] median=${sleepMetrics.rhr}`);
                 } else {
-                    // Fallback: average of lowest 10%
-                    const rhrCount = Math.max(5, Math.floor(sortedBpms.length * 0.10));
-                    const lowestBPMs = sortedBpms.slice(0, rhrCount);
-                    sleepMetrics.rhr = Math.round(lowestBPMs.reduce((a, b) => a + b, 0) / rhrCount);
-                    debug(`RHR (lowest 10%): ${sleepMetrics.rhr} bpm`);
+                    // Fallback: average of lowest 15% (skip first value as potential artifact)
+                    const startIndex = Math.min(1, sortedBpms.length - 1);
+                    const rhrCount = Math.max(3, Math.floor(sortedBpms.length * 0.15));
+                    const lowestBPMs = sortedBpms.slice(startIndex, startIndex + rhrCount);
+                    sleepMetrics.rhr = Math.round(lowestBPMs.reduce((a, b) => a + b, 0) / lowestBPMs.length);
+                    debug(`RHR (lowest 15%, skip artifacts): ${sleepMetrics.rhr} bpm`);
                 }
                 debug(`RHR calculated from ${metricsSource}: ${sleepMetrics.rhr} bpm`);
             }
