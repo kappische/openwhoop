@@ -3688,111 +3688,35 @@
         // Respiratory Sinus Arrhythmia (RSA): breathing modulates HR at 0.15-0.4 Hz (9-24 rpm)
         // During sleep, typical range is 12-16 rpm
         function calculateRespiratoryRate(rrIntervals) {
-            // Need at least 50 RR intervals: smoothing uses 15-sample window,
-            // and we need 30+ smoothed values for peak detection (50-15+1=36)
-            if (rrIntervals.length < 50) return null;
+            // Need at least 30 RR intervals for reliable autocorrelation
+            if (rrIntervals.length < 30) return null;
 
-            // Step 1: Heavy smoothing to extract respiratory oscillation
-            // Use 15-sample window to better isolate low-frequency respiratory modulation
-            // This filters out beat-to-beat variability and cardiac noise
-            const windowSize = 15;
-            const smoothed = [];
-            for (let i = 0; i < rrIntervals.length - windowSize + 1; i++) {
-                const window = rrIntervals.slice(i, i + windowSize);
-                smoothed.push(window.reduce((a, b) => a + b, 0) / windowSize);
-            }
-
-            if (smoothed.length < 30) return null;
-
-            // Calculate average RR for later conversion
             const avgRR = rrIntervals.reduce((a, b) => a + b, 0) / rrIntervals.length;
 
-            // Calculate the amplitude of variation to validate signal quality
-            const smoothedMin = Math.min(...smoothed);
-            const smoothedMax = Math.max(...smoothed);
-            const amplitude = smoothedMax - smoothedMin;
-
-            // If amplitude is too small, the signal doesn't have clear respiratory modulation
-            // Typical RSA amplitude is 20-100ms during sleep
-            if (amplitude < 10) {
-                return calculateRespiratoryRateAutocorr(smoothed, avgRR);
+            // Light smoothing (3-sample) to reduce noise while preserving RSA signal
+            // This is much gentler than the previous 15-sample window
+            const smoothed = [];
+            for (let i = 1; i < rrIntervals.length - 1; i++) {
+                smoothed.push((rrIntervals[i-1] + rrIntervals[i] + rrIntervals[i+1]) / 3);
             }
 
-            // Step 2: Find peaks and troughs in smoothed signal
-            // Use 3-sample look-ahead/behind for more robust detection
-            const peaks = [];
-            const troughs = [];
+            if (smoothed.length < 20) return null;
 
-            for (let i = 3; i < smoothed.length - 3; i++) {
-                // Peak detection - must be local maximum in 7-sample window
-                if (smoothed[i] > smoothed[i-1] && smoothed[i] > smoothed[i-2] && smoothed[i] > smoothed[i-3] &&
-                    smoothed[i] > smoothed[i+1] && smoothed[i] > smoothed[i+2] && smoothed[i] > smoothed[i+3]) {
-                    // Additionally check that peak has significant amplitude (>30% of total range)
-                    if ((smoothed[i] - smoothedMin) > amplitude * 0.3) {
-                        peaks.push({ index: i, value: smoothed[i] });
-                    }
-                }
-                // Trough detection
-                if (smoothed[i] < smoothed[i-1] && smoothed[i] < smoothed[i-2] && smoothed[i] < smoothed[i-3] &&
-                    smoothed[i] < smoothed[i+1] && smoothed[i] < smoothed[i+2] && smoothed[i] < smoothed[i+3]) {
-                    troughs.push({ index: i, value: smoothed[i] });
-                }
-            }
-
-            // Need at least 3 peaks to calculate period reliably
-            if (peaks.length < 3) {
-                return calculateRespiratoryRateAutocorr(smoothed, avgRR);
-            }
-
-            // Step 3: Calculate periods between consecutive peaks
-            // Convert to time-based filtering to handle varying heart rates
-            const periods = [];
-            for (let i = 1; i < peaks.length; i++) {
-                const periodBeats = peaks[i].index - peaks[i-1].index;
-                // Convert beat period to milliseconds using average RR
-                const periodMs = periodBeats * avgRR;
-                // Filter to physiological breathing range: 8-20 rpm = 3000-7500ms period
-                // This scales correctly regardless of heart rate
-                if (periodMs >= 3000 && periodMs <= 7500) {
-                    periods.push(periodBeats);
-                }
-            }
-
-            if (periods.length < 2) {
-                return calculateRespiratoryRateAutocorr(smoothed, avgRR);
-            }
-
-            // Step 4: Use median period (robust to outliers)
-            periods.sort((a, b) => a - b);
-            const medianPeriod = periods[Math.floor(periods.length / 2)];
-
-            // Convert to respiratory rate
-            // Period is in beats, need to convert to time using avgRR
-            const periodMs = medianPeriod * avgRR;
-            const breathsPerMinute = 60000 / periodMs;
-
-            return Math.max(8, Math.min(20, Math.round(breathsPerMinute * 10) / 10));
-        }
-
-        // Fallback: autocorrelation method
-        function calculateRespiratoryRateAutocorr(smoothed, avgRR) {
-            if (smoothed.length < 30) return null;
-
-            // Detrend
+            // Detrend: remove mean to center around zero
             const mean = smoothed.reduce((a, b) => a + b, 0) / smoothed.length;
             const detrended = smoothed.map(v => v - mean);
 
-            // Target lag range: 8-20 rpm = 3000-7500ms period
-            // Convert to beat-based lags using avgRR to scale with heart rate
-            const minLagBeats = Math.max(2, Math.floor(3000 / avgRR));  // 20 rpm
-            const maxLagBeats = Math.ceil(7500 / avgRR);                 // 8 rpm
-            const minLag = minLagBeats;
-            const maxLag = Math.min(maxLagBeats, Math.floor(detrended.length / 4));
+            // Calculate autocorrelation to find periodic respiratory pattern
+            // RSA range: 0.15-0.4 Hz = 2500-6667ms period (9-24 rpm)
+            // Convert to beat-based lags using avgRR
+            const minLagBeats = Math.max(2, Math.floor(2500 / avgRR));   // 24 rpm upper bound
+            const maxLagBeats = Math.min(Math.ceil(6667 / avgRR), Math.floor(detrended.length / 3));  // 9 rpm lower bound
 
-            // Find first significant peak in autocorrelation (not maximum)
-            // This is more robust than finding the global maximum
+            if (maxLagBeats <= minLagBeats) return null;
+
+            // Compute autocorrelation for each lag
             const autocorr = [];
-            for (let lag = 0; lag <= maxLag; lag++) {
+            for (let lag = 0; lag <= maxLagBeats; lag++) {
                 let sum = 0;
                 for (let i = 0; i < detrended.length - lag; i++) {
                     sum += detrended[i] * detrended[i + lag];
@@ -3800,47 +3724,47 @@
                 autocorr.push(sum / (detrended.length - lag));
             }
 
-            // Normalize by lag-0 autocorrelation
+            // Normalize by lag-0 (variance)
             const norm = autocorr[0];
             if (norm <= 0) return null;
-
             for (let i = 0; i < autocorr.length; i++) {
                 autocorr[i] /= norm;
             }
 
-            // Find first peak after minLag that exceeds threshold
-            const threshold = 0.3; // Require at least 30% correlation
+            // Find the first significant peak in the valid respiratory range
+            // This represents the dominant breathing period
             let bestLag = 0;
+            let bestCorr = 0.2; // Minimum correlation threshold
 
-            for (let lag = minLag; lag <= maxLag - 1; lag++) {
+            for (let lag = minLagBeats; lag <= maxLagBeats - 1; lag++) {
                 // Check if this is a local maximum above threshold
-                if (autocorr[lag] > threshold &&
+                if (autocorr[lag] > bestCorr &&
                     autocorr[lag] > autocorr[lag - 1] &&
                     autocorr[lag] > autocorr[lag + 1]) {
                     bestLag = lag;
-                    break; // Take first significant peak
+                    bestCorr = autocorr[lag];
+                    break; // Take first significant peak (fundamental frequency)
                 }
             }
 
+            // If no clear peak, find maximum in range
             if (bestLag === 0) {
-                // No clear peak found, use maximum in range as fallback
-                let maxCorr = 0;
-                for (let lag = minLag; lag <= maxLag; lag++) {
-                    if (autocorr[lag] > maxCorr) {
-                        maxCorr = autocorr[lag];
+                for (let lag = minLagBeats; lag <= maxLagBeats; lag++) {
+                    if (autocorr[lag] > bestCorr) {
+                        bestCorr = autocorr[lag];
                         bestLag = lag;
                     }
                 }
             }
 
-            if (bestLag === 0) return 14; // Default to typical sleep rate
+            if (bestLag === 0) return null; // No respiratory pattern detected
 
-            // Convert to respiratory rate
+            // Convert lag (in beats) to respiratory rate
             const periodMs = bestLag * avgRR;
             const breathsPerMinute = 60000 / periodMs;
 
-            // Cap at 20 rpm - higher values likely indicate noise, not breathing
-            return Math.max(8, Math.min(20, Math.round(breathsPerMinute * 10) / 10));
+            // Clamp to physiological range
+            return Math.max(8, Math.min(24, Math.round(breathsPerMinute * 10) / 10));
         }
 
         // Process historical data to find sleep and calculate metrics
